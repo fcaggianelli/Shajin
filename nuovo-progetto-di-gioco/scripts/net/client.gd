@@ -35,6 +35,11 @@ var last_snap_tick := -1
 var snapshots: Array = []         # ultimi snapshot, ordinati per tick
 var remote_positions := {}        # id -> Vector2 come visualizzato
 
+# --- Interpolazione delle entità remote ---
+const INTERP_DELAY_TICKS := 6     # 100 ms a 60 Hz = 2 intervalli di snapshot
+var server_tick_est := 0.0        # stima del tick server "attuale" (avanza di 1 per tick)
+var render_tick := 0.0            # istante (in tick server) in cui mostriamo i remoti
+
 # --- Statistiche ---
 var ping_ms := 0.0
 var err_last := 0.0
@@ -82,6 +87,8 @@ func _physics_process(_delta: float) -> void:
 	if state == null:
 		return  # aspettiamo il primo snapshot per conoscere lo spawn
 
+	server_tick_est += 1.0
+	render_tick = server_tick_est - INTERP_DELAY_TICKS
 	_update_remotes()
 
 	# 1. campiona l'input di questo tick
@@ -91,6 +98,7 @@ func _physics_process(_delta: float) -> void:
 	var input := _sample_input()
 	cmd.buttons = input.buttons
 	cmd.aim = input.aim
+	cmd.view_tick = render_tick
 
 	# 2. prediction: applicalo subito, senza aspettare il server
 	if prediction_enabled:
@@ -124,6 +132,12 @@ func _on_snapshot(snap: Dictionary) -> void:
 		return  # vecchio o fuori ordine
 	last_snap_tick = snap.tick
 	snapshots.append(snap)
+	# Orologio: inseguiamo dolcemente il tick degli snapshot ricevuti.
+	var drift: float = snap.tick - server_tick_est
+	if absf(drift) > 30.0:
+		server_tick_est = snap.tick
+	else:
+		server_tick_est += drift * 0.1
 	while snapshots.size() > 32:
 		snapshots.pop_front()
 
@@ -173,14 +187,28 @@ func _record_error(e: float) -> void:
 	errors.append(e)
 
 
+## Gli altri giocatori sono mostrati a render_tick (~100 ms nel passato),
+## interpolando linearmente tra i due snapshot che lo racchiudono.
 func _update_remotes() -> void:
+	remote_positions.clear()
 	if snapshots.is_empty():
 		return
-	var latest: Dictionary = snapshots[-1]
-	remote_positions.clear()
-	for id in latest.players:
-		if id != my_id:
-			remote_positions[id] = latest.players[id].state.pos
+	var a: Dictionary = snapshots[0]
+	var b: Dictionary = snapshots[0]
+	for snap in snapshots:
+		b = snap
+		if snap.tick >= render_tick:
+			break
+		a = snap
+	var t := 0.0
+	if b.tick > a.tick:
+		t = clampf((render_tick - a.tick) / float(b.tick - a.tick), 0.0, 1.0)
+	for id in b.players:
+		if id == my_id:
+			continue
+		var to: Vector2 = b.players[id].state.pos
+		var from: Vector2 = a.players[id].state.pos if a.players.has(id) else to
+		remote_positions[id] = from.lerp(to, t)
 
 
 func _process(_delta: float) -> void:
