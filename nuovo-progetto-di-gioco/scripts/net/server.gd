@@ -102,3 +102,26 @@ func _send_snapshots() -> void:
 		var c: Dictionary = clients[id]
 		var hold_ms := int((now - c.applied_usec) / 1000) if c.last_seq > 0 else 0
 		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players))
+
+
+## Posizione di `id` al tick (frazionario) `t`, ricostruita dalla cronologia
+## esattamente come la interpola il client (lerp tra due snapshot).
+## Ritorna null se `id` non compare nella cronologia.
+func position_at(id: int, t: float) -> Variant:
+	if history.is_empty():
+		return null
+	var a: Dictionary = history[0]
+	var b: Dictionary = history[0]
+	for h in history:
+		b = h
+		if h.tick >= t:
+			break
+		a = h
+	if not b.pos.has(id):
+		return a.pos.get(id)
+	var to: Vector2 = b.pos[id]
+	var from: Vector2 = a.pos.get(id, to)
+	var f := 0.0
+	if b.tick > a.tick:
+		f = clampf((t - a.tick) / float(b.tick - a.tick), 0.0, 1.0)
+	return from.lerp(to, f)
