@@ -8,6 +8,7 @@ const Player = preload("res://scripts/game/player.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
 const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
+const Weapon = preload("res://scripts/game/weapon.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
 
@@ -53,6 +54,10 @@ var errors: Array = []            # tutti gli errori di predizione misurati
 var _peer: ENetMultiplayerPeer
 var _players := {}                # id -> Player node
 var _prev_mouse := false
+var _tracers: Array = []          # [from, to, ttl] disegnati per il feedback immediato dello sparo
+var _deaths := {}                 # id -> deaths visti nell'ultimo snapshot (per il flash)
+var my_hits := 0
+var my_deaths := 0
 
 
 func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
@@ -106,7 +111,8 @@ func _physics_process(_delta: float) -> void:
 
 	# 2. prediction: applicalo subito, senza aspettare il server
 	if prediction_enabled:
-		Movement.simulate_move(state, cmd, Movement.DT)
+		if Movement.simulate_move(state, cmd, Movement.DT):
+			_add_tracer(cmd.aim)
 		predicted[seq] = state.pos
 
 	# 3. buffer + invio (con ridondanza degli input non confermati)
@@ -145,9 +151,17 @@ func _on_snapshot(snap: Dictionary) -> void:
 	while snapshots.size() > 32:
 		snapshots.pop_front()
 
+	for id in snap.players:
+		var d: int = snap.players[id].deaths
+		if _deaths.has(id) and d > _deaths[id] and _players.has(id):
+			_players[id].flash = 0.25
+		_deaths[id] = d
+
 	if not snap.players.has(my_id):
 		return
 	server_state = snap.players[my_id].state
+	my_hits = snap.players[my_id].hits
+	my_deaths = snap.players[my_id].deaths
 
 	if state == null:
 		state = server_state.copy()
@@ -183,6 +197,14 @@ func _on_snapshot(snap: Dictionary) -> void:
 		correction_max = maxf(correction_max, before.distance_to(state.pos))
 
 
+## Tracciante locale: lo sparo è predetto, quindi il raggio appare subito;
+## se ha colpito lo decide comunque il server.
+func _add_tracer(aim: float) -> void:
+	var dir := Vector2.from_angle(aim)
+	var hit := Weapon.trace(state.pos, dir, remote_positions)
+	_tracers.append([state.pos, state.pos + dir * hit[1], 0.15])
+
+
 func _record_error(e: float) -> void:
 	err_last = e
 	err_max = maxf(err_max, e)
@@ -215,9 +237,12 @@ func _update_remotes() -> void:
 		remote_positions[id] = from.lerp(to, t)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if state == null:
 		return
+	for tr in _tracers:
+		tr[2] -= delta
+	_tracers = _tracers.filter(func(tr): return tr[2] > 0.0)
 	var seen := {}
 	_place(my_id, state.pos)
 	seen[my_id] = true
@@ -245,3 +270,5 @@ func _draw() -> void:
 		# fantasma: ultima posizione autoritativa del giocatore locale
 		var s := Movement.PLAYER_SIZE
 		draw_rect(Rect2(server_state.pos - Vector2(s, s) / 2, Vector2(s, s)), Color(1, 1, 1, 0.5), false, 1.0)
+	for tr in _tracers:
+		draw_line(tr[0], tr[1], Color(1, 0.9, 0.3, tr[2] / 0.15), 2.0)

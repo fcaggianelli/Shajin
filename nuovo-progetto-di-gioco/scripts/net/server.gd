@@ -8,6 +8,7 @@ const Movement = preload("res://scripts/game/movement.gd")
 const PlayerState = preload("res://scripts/game/player_state.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
+const Weapon = preload("res://scripts/game/weapon.gd")
 
 const SNAPSHOT_EVERY := Movement.TICK_RATE / 20  # 60 Hz / 20 Hz = 3 tick
 const HISTORY_SECONDS := 1.0
@@ -18,6 +19,13 @@ var tick := 0
 var clients := {}  # peer_id -> {id, state, last_seq, applied_usec, hits, deaths}
 ## Cronologia degli snapshot inviati: [{tick, pos: {id: Vector2}}], ~1 s.
 var history: Array = []
+
+## Lag compensation: se attiva, i colpi sono verificati contro le posizioni che
+## il tiratore vedeva (view_tick del suo comando), non contro quelle attuali.
+var lag_comp_enabled := true
+var shots := 0
+var hits_with_lag_comp := 0     # colpi che sarebbero andati a segno riavvolgendo
+var hits_without_lag_comp := 0  # colpi che sarebbero andati a segno senza riavvolgere
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
@@ -81,8 +89,32 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 		c.applied_usec = Time.get_ticks_usec()
 
 
-func _on_fire(_shooter: Dictionary, _cmd) -> void:
-	pass  # fase 2: hitscan con lag compensation
+func _on_fire(shooter: Dictionary, cmd) -> void:
+	var origin: Vector2 = shooter.state.pos  # il tiratore è nel "presente", come nella sua predizione
+	var dir := Vector2.from_angle(cmd.aim)
+	# Riavvolgi: non più indietro della cronologia (~1 s) né nel futuro.
+	var t := clampf(cmd.view_tick, tick - HISTORY_SECONDS * Movement.TICK_RATE, tick)
+	var rewound := {}
+	var current := {}
+	for id in clients:
+		if id == shooter.id:
+			continue
+		current[id] = clients[id].state.pos
+		var p = position_at(id, t)
+		rewound[id] = p if p != null else current[id]
+
+	var hit_rewound: int = Weapon.trace(origin, dir, rewound)[0]
+	var hit_current: int = Weapon.trace(origin, dir, current)[0]
+	shots += 1
+	if hit_rewound != 0: hits_with_lag_comp += 1
+	if hit_current != 0: hits_without_lag_comp += 1
+
+	var hit_id := hit_rewound if lag_comp_enabled else hit_current
+	if hit_id != 0:
+		var target: Dictionary = clients[hit_id]
+		shooter.hits += 1
+		target.deaths += 1
+		target.state.vel += dir * Weapon.KNOCKBACK  # il client colpito non può predirlo: lo corregge la riconciliazione
 
 
 func _record_history() -> void:

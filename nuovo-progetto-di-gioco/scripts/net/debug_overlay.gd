@@ -37,6 +37,7 @@ func _process(_delta: float) -> void:
 		"render tick %.1f   (ritardo %d ms)" % [c.render_tick, c.INTERP_DELAY_TICKS * 1000 / 60],
 		"rete sim: lag %d ms  jitter %d ms  loss %d%%" % [c.sim.lag_ms, c.sim.jitter_ms, c.sim.loss * 100],
 		"persi: out %d  in %d" % [c.sim.dropped_out, c.sim.dropped_in],
+		"colpi messi a segno %d   subiti %d" % [c.my_hits, c.my_deaths],
 		"",
 		"[F4] prediction:      %s" % on.call(c.prediction_enabled),
 		"[F5] reconciliation:  %s" % on.call(c.reconciliation_enabled),

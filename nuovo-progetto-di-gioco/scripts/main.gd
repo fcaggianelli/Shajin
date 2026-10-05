@@ -3,6 +3,7 @@ extends Node
 ##   godot --headless --path . -- --server [--port=27960]
 ##   godot --path . -- --client [--host=127.0.0.1] [--port=27960]
 ## Opzioni del simulatore di rete (per direzione): --lag=MS --jitter=MS --loss=0.05
+## Server: --no-lagcomp disattiva la lag compensation dell'arma hitscan.
 
 const Server = preload("res://scripts/net/server.gd")
 const Client = preload("res://scripts/net/client.gd")
@@ -22,6 +23,7 @@ func _ready() -> void:
 
 	if args.has("server") or (headless and not args.has("client")):
 		var server := Server.new()
+		server.lag_comp_enabled = not args.has("no-lagcomp")
 		add_child(server)
 		if server.start(port, lag, jitter, loss) != OK:
 			push_error("impossibile avviare il server sulla porta %d" % port)
