@@ -17,6 +17,8 @@ const SETTLE_TICKS := 120    # 2 s fermi per far convergere tutto
 const MAX_MEAN_ERROR := 0.5  # px: soglia sull'errore medio di predizione
 const MAX_FINAL_ERROR := 0.01  # px: client e server devono coincidere alla fine
 const MAX_INTERP_MEAN_ERROR := 5.0  # px: remoti interpolati vs verità del server
+const MIN_LAG_COMP_HIT_RATE := 0.9  # fase 2: mirando dove si VEDE il bersaglio si deve colpire
+const SHOOT_TICKS := 600
 
 const PATTERN := [  # client 0: [buttons, durata in tick]
 	[InputCmd.RIGHT, 50], [InputCmd.DOWN, 40], [InputCmd.LEFT | InputCmd.UP, 60],
@@ -34,6 +36,7 @@ func _ready() -> void:
 	print("\n=== Netcode test: lag %d ms/direzione, jitter %d ms, loss %d%%/direzione ===" % [LAG_MS, JITTER_MS, LOSS * 100])
 	for sc in scenarios:
 		ok = (await _run_movement(sc)) and ok
+	ok = (await _run_lag_comp()) and ok
 	print("\nRISULTATO: %s" % ("PASS" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -136,6 +139,69 @@ func _run_movement(sc: Dictionary) -> bool:
 	server.queue_free()
 	for i in 10:
 		await get_tree().physics_frame
+	return ok
+
+
+## Fase 2: il client 0 sta fermo e spara ogni 12 tick esattamente al centro del
+## client 1 COME LO VEDE (posizione interpolata, ~100 ms + latenza nel passato).
+## Il client 1 corre su e giù a velocità massima. Il server conta sia i colpi
+## validi riavvolgendo (lag compensation) sia quelli che varrebbero senza.
+func _run_lag_comp() -> bool:
+	print("\n--- Scenario D  hitscan con lag compensation ---")
+	var port := 30000 + randi() % 20000
+	var server := Server.new()
+	add_child(server)
+	if server.start(port) != OK:
+		print("FAIL: server non avviato")
+		return false
+	var shooter := Client.new()
+	var runner := Client.new()
+	for c in [shooter, runner]:
+		add_child(c)
+		c.start("127.0.0.1", port, LAG_MS, JITTER_MS, LOSS, 99 + c.get_index())
+	shooter.input_provider = func(c, seq: int) -> Dictionary:
+		if seq > SHOOT_TICKS or seq % 12 != 0 or not c.remote_positions.has(runner.my_id):
+			return {buttons = 0, aim = 0.0}
+		var target: Vector2 = c.remote_positions[runner.my_id]
+		return {buttons = InputCmd.FIRE, aim = (target - c.state.pos).angle()}
+	runner.input_provider = func(_c, seq: int) -> Dictionary:
+		if seq > SHOOT_TICKS:
+			return {buttons = 0, aim = 0.0}  # si ferma, per poter confrontare con il server
+		return {buttons = InputCmd.DOWN if (seq / 90) % 2 == 0 else InputCmd.UP, aim = 0.0}
+
+	var waited := 0
+	while not (shooter.is_ready() and runner.is_ready()):
+		await get_tree().physics_frame
+		waited += 1
+		if waited > 600:
+			print("FAIL: i client non si sono connessi")
+			return false
+	while shooter.seq < SHOOT_TICKS + SETTLE_TICKS or runner.seq < SHOOT_TICKS + SETTLE_TICKS:
+		await get_tree().physics_frame
+
+	var rate_lc := server.hits_with_lag_comp / maxf(server.shots, 1)
+	var rate_no := server.hits_without_lag_comp / maxf(server.shots, 1)
+	var final_err: float = runner.state.pos.distance_to(server.clients[runner.my_id].state.pos)
+	print("colpi sparati %d | a segno CON lag compensation %d (%.0f%%) | SENZA %d (%.0f%%)" % [
+		server.shots, server.hits_with_lag_comp, rate_lc * 100, server.hits_without_lag_comp, rate_no * 100])
+	print("bersaglio: colpi subiti (dal suo snapshot) %d | errore predizione medio %.4f px, max %.4f px (spinte non predicibili) | errore finale %.4f px" % [
+		runner.my_deaths, runner.err_sum / maxf(runner.err_count, 1), runner.err_max, final_err])
+	var ok := true
+	if server.shots < 30:
+		print("  FAIL: troppi pochi colpi sparati")
+		ok = false
+	if rate_lc < MIN_LAG_COMP_HIT_RATE:
+		print("  FAIL: hit rate con lag compensation %.2f < %.2f" % [rate_lc, MIN_LAG_COMP_HIT_RATE])
+		ok = false
+	if final_err > MAX_FINAL_ERROR:
+		print("  FAIL: il bersaglio spinto non converge col server (%.4f px)" % final_err)
+		ok = false
+	print("Scenario: %s" % ("OK" if ok else "FAIL"))
+	for c in [shooter, runner]:
+		c.stop()
+		c.queue_free()
+	server.stop()
+	server.queue_free()
 	return ok
 
 
