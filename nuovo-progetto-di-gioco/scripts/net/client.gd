@@ -7,6 +7,7 @@ const InputCmd = preload("res://scripts/game/input_cmd.gd")
 const Player = preload("res://scripts/game/player.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
+const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
 
@@ -62,6 +63,9 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 	sim = NetSim.new(_peer, seed_value)
 	sim.configure(lag, jitter, loss)
 	position = ARENA_OFFSET
+	var overlay := DebugOverlay.new()
+	overlay.client = self
+	add_child(overlay)
 	return OK
 
 
