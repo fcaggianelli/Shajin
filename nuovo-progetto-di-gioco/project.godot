@@ -10,7 +10,8 @@ config_version=5
 
 [application]
 
-config/name="Nuovo progetto di gioco"
+config/name="Netcode Q3 Prototype"
+run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
 
@@ -20,6 +21,9 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
 [physics]
+
+common/physics_ticks_per_second=60
+common/max_physics_steps_per_frame=8
 
 3d/physics_engine="Jolt Physics"
 
