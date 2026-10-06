@@ -10,6 +10,7 @@ const NetSim = preload("res://scripts/net/net_sim.gd")
 const NetConfig = preload("res://scripts/net/net_config.gd")
 const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
+const Map = preload("res://scripts/game/map.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
 const CONNECT_TIMEOUT_MS := 5000
@@ -285,6 +286,8 @@ func _place(id: int, pos: Vector2) -> void:
 func _draw() -> void:
 	draw_rect(Movement.ARENA, Color(0.16, 0.17, 0.2))
 	draw_rect(Movement.ARENA, Color(0.55, 0.55, 0.6), false, 2.0)
+	for w in Map.WALLS:
+		draw_rect(w, Color(0.45, 0.47, 0.55))
 	if server_state and prediction_enabled:
 		# fantasma: ultima posizione autoritativa del giocatore locale
 		var s := Movement.PLAYER_SIZE

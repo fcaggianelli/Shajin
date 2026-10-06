@@ -9,6 +9,7 @@ const Server = preload("res://scripts/net/server.gd")
 const Client = preload("res://scripts/net/client.gd")
 const InputCmd = preload("res://scripts/game/input_cmd.gd")
 const NetConfig = preload("res://scripts/net/net_config.gd")
+const Map = preload("res://scripts/game/map.gd")
 
 const LAG_MS := 100.0
 const JITTER_MS := 10.0
@@ -163,6 +164,7 @@ func _run_lag_comp(lag_ms: float, check_hit_rate: bool) -> bool:
 		lag_ms, "" if check_hit_rate else ", oltre sv_maxunlag: solo informativo"])
 	var port := 30000 + randi() % 20000
 	var server := Server.new()
+	server.spawns = [Vector2(150, 200), Vector2(720, 200)]  # linea di tiro libera dai muri
 	add_child(server)
 	if server.start(port) != OK:
 		print("FAIL: server non avviato")
@@ -176,11 +178,13 @@ func _run_lag_comp(lag_ms: float, check_hit_rate: bool) -> bool:
 		if seq > SHOOT_TICKS or seq % 12 != 0 or not c.remote_positions.has(runner.my_id):
 			return {buttons = 0, aim = 0.0}
 		var target: Vector2 = c.remote_positions[runner.my_id]
+		if not Map.line_of_sight(c.state.pos, target):
+			return {buttons = 0, aim = 0.0}  # spara solo se lo vede (le spinte possono mandarlo dietro un muro)
 		return {buttons = InputCmd.FIRE, aim = (target - c.state.pos).angle()}
 	runner.input_provider = func(_c, seq: int) -> Dictionary:
 		if seq > SHOOT_TICKS:
 			return {buttons = 0, aim = 0.0}  # si ferma, per poter confrontare con il server
-		return {buttons = InputCmd.DOWN if (seq / 90) % 2 == 0 else InputCmd.UP, aim = 0.0}
+		return {buttons = InputCmd.DOWN if (seq / 30) % 2 == 0 else InputCmd.UP, aim = 0.0}
 
 	var waited := 0
 	while not (shooter.is_ready() and runner.is_ready()):

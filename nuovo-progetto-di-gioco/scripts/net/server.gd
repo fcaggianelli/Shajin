@@ -9,12 +9,13 @@ const PlayerState = preload("res://scripts/game/player_state.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
+const Map = preload("res://scripts/game/map.gd")
 
 const NetConfig = preload("res://scripts/net/net_config.gd")
 const HISTORY_SECONDS := 1.0
-const SPAWNS := [Vector2(150, 300), Vector2(650, 300), Vector2(400, 150), Vector2(400, 450)]
 
 var sim: NetSim
+var spawns: Array = Map.SPAWNS  # i test possono sostituirli
 var bind_ip := "0.0.0.0"  # tutte le interfacce IPv4: raggiungibile anche da altri PC
 var tick := 0
 var clients := {}  # peer_id -> {id, state, last_seq, applied_usec, hits, deaths}
@@ -67,7 +68,7 @@ func stop() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	var s := PlayerState.new()
-	s.pos = SPAWNS[_spawn_index % SPAWNS.size()]
+	s.pos = spawns[_spawn_index % spawns.size()]
 	_spawn_index += 1
 	clients[id] = {id = id, state = s, last_seq = 0, applied_usec = 0, hits = 0, deaths = 0}
 	print("[server] client %d connesso" % id)

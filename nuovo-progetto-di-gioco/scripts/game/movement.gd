@@ -5,6 +5,7 @@ extends RefCounted
 
 const PlayerState = preload("res://scripts/game/player_state.gd")
 const InputCmd = preload("res://scripts/game/input_cmd.gd")
+const Map = preload("res://scripts/game/map.gd")
 
 ## Frequenza della simulazione: la imposta NetConfig (64 Hz per il preset cs2).
 ## Client e server devono usare lo stesso valore, altrimenti la predizione diverge.
@@ -53,8 +54,13 @@ static func simulate_move(state: PlayerState, cmd: InputCmd, delta: float) -> bo
 		if add > 0.0:
 			state.vel += wish * minf(ACCELERATE * delta * MAX_SPEED, add)
 
-	# Integrazione + collisione con i bordi dell'arena
-	state.pos += state.vel * delta
+	# Integrazione un asse alla volta, con collisione contro i muri (si scivola lungo)
+	state.pos.x += state.vel.x * delta
+	Map.collide_axis(state, 0, PLAYER_SIZE)
+	state.pos.y += state.vel.y * delta
+	Map.collide_axis(state, 1, PLAYER_SIZE)
+
+	# Bordi dell'arena
 	var half := PLAYER_SIZE * 0.5
 	var lo := ARENA.position + Vector2(half, half)
 	var hi := ARENA.end - Vector2(half, half)
