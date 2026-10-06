@@ -15,6 +15,7 @@ const HISTORY_SECONDS := 1.0
 const SPAWNS := [Vector2(150, 300), Vector2(650, 300), Vector2(400, 150), Vector2(400, 450)]
 
 var sim: NetSim
+var bind_ip := "0.0.0.0"  # tutte le interfacce IPv4: raggiungibile anche da altri PC
 var tick := 0
 var clients := {}  # peer_id -> {id, state, last_seq, applied_usec, hits, deaths}
 ## Cronologia degli snapshot inviati: [{tick, pos: {id: Vector2}}], ~1 s.
@@ -33,15 +34,27 @@ var _spawn_index := 0
 
 func start(port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
 	_peer = ENetMultiplayerPeer.new()
+	_peer.set_bind_ip(bind_ip)
 	var err := _peer.create_server(port, 32)
 	if err != OK:
+		_peer = null
 		return err
 	_peer.peer_connected.connect(_on_peer_connected)
 	_peer.peer_disconnected.connect(_on_peer_disconnected)
 	sim = NetSim.new(_peer, seed_value)
 	sim.configure(lag, jitter, loss)
-	print("[server] in ascolto sulla porta %d (lag %d ms, jitter %d ms, loss %d%%)" % [port, lag, jitter, loss * 100])
+	print("[server] in ascolto su %s:%d (lag %d ms, jitter %d ms, loss %d%%)" % [bind_ip, port, lag, jitter, loss * 100])
+	print("[server] IP locali: %s" % ", ".join(local_ipv4()))
 	return OK
+
+
+## Indirizzi IPv4 di questa macchina (esclusi loopback/link-local), da comunicare ai client in LAN.
+static func local_ipv4() -> PackedStringArray:
+	var out := PackedStringArray()
+	for a in IP.get_local_addresses():
+		if a.is_valid_ip_address() and not ":" in a and not a.begins_with("127.") and not a.begins_with("169.254."):
+			out.append(a)
+	return out
 
 
 func stop() -> void:
@@ -60,6 +73,7 @@ func _on_peer_connected(id: int) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	clients.erase(id)
+	sim.forget_peer(id)
 	print("[server] client %d disconnesso" % id)
 
 

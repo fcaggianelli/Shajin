@@ -45,6 +45,11 @@ func send(target: int, data: PackedByteArray) -> void:
 	_out.append([_deliver_time(), target, data])
 
 
+## Scarta i pacchetti ancora in coda verso un peer che si è disconnesso.
+func forget_peer(id: int) -> void:
+	_out = _out.filter(func(item): return item[1] != id)
+
+
 ## Fa il poll di ENet, invia ciò che è "partito" e ritorna i pacchetti in
 ## entrata che sono "arrivati": Array di [from_peer, bytes] in ordine di arrivo.
 func poll() -> Array:

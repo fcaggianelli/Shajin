@@ -11,6 +11,10 @@ const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
+const CONNECT_TIMEOUT_MS := 5000
+
+## Emesso quando la connessione fallisce o cade; was_connected distingue i due casi.
+signal disconnected(was_connected: bool)
 
 var sim: NetSim
 var my_id := 0
@@ -22,6 +26,9 @@ var redundancy_enabled := true  # off = ogni pacchetto porta solo l'ultimo input
 
 ## Sorgente input sostituibile (test): func(client, seq) -> {buttons: int, aim: float}
 var input_provider := Callable()
+
+## Testo extra per l'overlay (es. IP da comunicare quando si ospita la partita).
+var info_text := ""
 
 # --- Prediction ---
 var state: PlayerState            # stato predetto (o del server, se prediction off)
@@ -54,6 +61,7 @@ var errors: Array = []            # tutti gli errori di predizione misurati
 var _peer: ENetMultiplayerPeer
 var _players := {}                # id -> Player node
 var _prev_mouse := false
+var _connect_start_ms := 0
 var _tracers: Array = []          # [from, to, ttl] disegnati per il feedback immediato dello sparo
 var _deaths := {}                 # id -> deaths visti nell'ultimo snapshot (per il flash)
 var my_hits := 0
@@ -64,7 +72,9 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 	_peer = ENetMultiplayerPeer.new()
 	var err := _peer.create_client(host, port)
 	if err != OK:
+		_peer = null
 		return err
+	_connect_start_ms = Time.get_ticks_msec()
 	sim = NetSim.new(_peer, seed_value)
 	sim.configure(lag, jitter, loss)
 	position = ARENA_OFFSET
@@ -91,6 +101,11 @@ func _physics_process(_delta: float) -> void:
 		var opened := Protocol.open(pkt[1])
 		if opened[0] == Protocol.TYPE_SNAPSHOT:
 			_on_snapshot(Protocol.decode_snapshot(opened[1]))
+	var timed_out := my_id == 0 and Time.get_ticks_msec() - _connect_start_ms > CONNECT_TIMEOUT_MS
+	if timed_out or _peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
+		stop()
+		disconnected.emit(my_id != 0)
+		return
 	if my_id == 0 and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
 		my_id = _peer.get_unique_id()
 	if state == null:
@@ -265,7 +280,8 @@ func _place(id: int, pos: Vector2) -> void:
 
 
 func _draw() -> void:
-	draw_rect(Movement.ARENA, Color(0.3, 0.3, 0.35), false, 2.0)
+	draw_rect(Movement.ARENA, Color(0.16, 0.17, 0.2))
+	draw_rect(Movement.ARENA, Color(0.55, 0.55, 0.6), false, 2.0)
 	if server_state and prediction_enabled:
 		# fantasma: ultima posizione autoritativa del giocatore locale
 		var s := Movement.PLAYER_SIZE
