@@ -11,6 +11,7 @@ const NetConfig = preload("res://scripts/net/net_config.gd")
 const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
 const Map = preload("res://scripts/game/map.gd")
+const Fog = preload("res://scripts/game/fog.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
 const CONNECT_TIMEOUT_MS := 5000
@@ -25,6 +26,7 @@ var my_id := 0
 var prediction_enabled := true
 var reconciliation_enabled := true
 var redundancy_enabled := true  # off = ogni pacchetto porta solo l'ultimo input
+var fog_enabled := true         # off = "wallhack": si vedono tutti, ombre spente
 
 ## Sorgente input sostituibile (test): func(client, seq) -> {buttons: int, aim: float}
 var input_provider := Callable()
@@ -63,6 +65,7 @@ var _peer: ENetMultiplayerPeer
 var _players := {}                # id -> Player node
 var _prev_mouse := false
 var _connect_start_ms := 0
+var _fog: Fog
 var _tracers: Array = []          # [from, to, ttl] disegnati per il feedback immediato dello sparo
 var _deaths := {}                 # id -> deaths visti nell'ultimo snapshot (per il flash)
 var my_hits := 0
@@ -79,6 +82,8 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 	sim = NetSim.new(_peer, seed_value)
 	sim.configure(lag, jitter, loss)
 	position = ARENA_OFFSET
+	_fog = Fog.new()
+	add_child(_fog)
 	var overlay := DebugOverlay.new()
 	overlay.client = self
 	add_child(overlay)
@@ -267,11 +272,21 @@ func _process(delta: float) -> void:
 	seen[my_id] = true
 	for id in remote_positions:
 		_place(id, remote_positions[id])
+		_players[id].visible = not fog_enabled or can_see(id)
 		seen[id] = true
+	_fog.visible = fog_enabled
+	_fog.eye = state.pos
+	_fog.queue_redraw()
 	for id in _players.keys():
 		if not seen.has(id):
 			_players[id].queue_free()
 			_players.erase(id)
+
+
+## Fog of war: il giocatore locale vede un remoto solo se c'è linea di vista tra
+## la propria posizione predetta e la posizione interpolata del remoto.
+func can_see(id: int) -> bool:
+	return remote_positions.has(id) and state != null and Map.line_of_sight(state.pos, remote_positions[id])
 
 
 func _place(id: int, pos: Vector2) -> void:
@@ -286,8 +301,9 @@ func _place(id: int, pos: Vector2) -> void:
 func _draw() -> void:
 	draw_rect(Movement.ARENA, Color(0.16, 0.17, 0.2))
 	draw_rect(Movement.ARENA, Color(0.55, 0.55, 0.6), false, 2.0)
-	for w in Map.WALLS:
-		draw_rect(w, Color(0.45, 0.47, 0.55))
+	if not fog_enabled:
+		for w in Map.WALLS:
+			draw_rect(w, Color(0.45, 0.47, 0.55))
 	if server_state and prediction_enabled:
 		# fantasma: ultima posizione autoritativa del giocatore locale
 		var s := Movement.PLAYER_SIZE

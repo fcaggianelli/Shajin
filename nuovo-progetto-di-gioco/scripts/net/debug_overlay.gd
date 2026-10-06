@@ -22,6 +22,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_F4: client.prediction_enabled = not client.prediction_enabled
 		KEY_F5: client.reconciliation_enabled = not client.reconciliation_enabled
 		KEY_F6: client.redundancy_enabled = not client.redundancy_enabled
+		KEY_F7: client.fog_enabled = not client.fog_enabled
 
 
 func _process(_delta: float) -> void:
@@ -46,5 +47,6 @@ func _process(_delta: float) -> void:
 		"[F4] prediction:      %s" % on.call(c.prediction_enabled),
 		"[F5] reconciliation:  %s" % on.call(c.reconciliation_enabled),
 		"[F6] ridondanza input: %s" % on.call(c.redundancy_enabled),
+		"[F7] fog of war:      %s" % on.call(c.fog_enabled),
 		"[F3] nascondi overlay",
 	])
