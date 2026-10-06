@@ -4,11 +4,13 @@ extends Node
 ##   godot --path . -- --client --host=1.2.3.4 [--port=27960]   (connessione diretta)
 ##   godot --path .                                              (menu: IP e porta, oppure Ospita)
 ## Opzioni del simulatore di rete (per direzione): --lag=MS --jitter=MS --loss=0.05
-## Server: --no-lagcomp disattiva la lag compensation dell'arma hitscan.
+## Server: --no-lagcomp disattiva la lag compensation dell'arma hitscan,
+##         --preset=cs2|q3 sceglie tick/snapshot/interpolazione (default cs2).
 
 const Server = preload("res://scripts/net/server.gd")
 const Client = preload("res://scripts/net/client.gd")
 const ConnectMenu = preload("res://scripts/ui/connect_menu.gd")
+const NetConfig = preload("res://scripts/net/net_config.gd")
 
 var args := {}
 var _menu: ConnectMenu
@@ -17,6 +19,7 @@ var _server: Server
 
 
 func _ready() -> void:
+	NetConfig.apply_preset(NetConfig.DEFAULT)  # il client poi si adegua al server
 	for a in OS.get_cmdline_args() + OS.get_cmdline_user_args():
 		if a.begins_with("--"):
 			var kv: PackedStringArray = a.substr(2).split("=", true, 1)
@@ -37,7 +40,12 @@ func _sim_params() -> Array:
 	return [float(args.get("lag", "0")), float(args.get("jitter", "0")), float(args.get("loss", "0"))]
 
 
-func _start_server(port: int) -> Error:
+func _start_server(port: int, preset: String = "") -> Error:
+	if preset == "":
+		preset = args.get("preset", NetConfig.DEFAULT)
+	if not NetConfig.apply_preset(preset):
+		push_error("preset sconosciuto '%s' (validi: %s)" % [preset, ", ".join(NetConfig.PRESETS.keys())])
+		return ERR_INVALID_PARAMETER
 	_server = Server.new()
 	_server.bind_ip = args.get("bind", "0.0.0.0")
 	_server.lag_comp_enabled = not args.has("no-lagcomp")
@@ -89,8 +97,8 @@ func _show_menu(status: String) -> void:
 
 
 ## "Ospita partita": server su 0.0.0.0 e client locale nello stesso processo.
-func _on_host_requested(port: int, layer: CanvasLayer) -> void:
-	if _start_server(port) != OK:
+func _on_host_requested(port: int, preset: String, layer: CanvasLayer) -> void:
+	if _start_server(port, preset) != OK:
 		_menu.set_status("Impossibile aprire la porta %d (già in uso?)." % port)
 		return
 	layer.queue_free()

@@ -8,10 +8,12 @@ extends RefCounted
 ##   Contiene tutti gli input non ancora confermati (ridondanza alla Quake III:
 ##   se un pacchetto si perde, i comandi arrivano col successivo).
 ## SNAPSHOT (server -> client, 20 Hz, inaffidabile)
-##   u8 type=2, u32 server_tick, u32 ack_seq, u16 hold_ms, u8 count,
+##   u8 type=2, u8 tick_rate, u8 snapshot_every, u16 interp_ms*100,
+##   u32 server_tick, u32 ack_seq, u16 hold_ms, u8 count,
 ##   count x [u32 id, f32 px, f32 py, f32 vx, f32 vy, u8 cooldown, u16 hits, u16 deaths]
 ##   ack_seq = ultimo input di QUESTO client già applicato dal server;
 ##   hold_ms = da quanto il server ha applicato ack_seq (per un ping corretto).
+##   tick_rate/snapshot_every/interp_ms: il preset del server (vedi NetConfig).
 
 const InputCmd = preload("res://scripts/game/input_cmd.gd")
 const PlayerState = preload("res://scripts/game/player_state.gd")
@@ -49,9 +51,12 @@ static func decode_input(b: StreamPeerBuffer) -> Array:
 
 
 ## players: Array di Dictionary {id, state: PlayerState, hits, deaths}
-static func encode_snapshot(tick: int, ack_seq: int, hold_ms: int, players: Array) -> PackedByteArray:
+static func encode_snapshot(config: Array, tick: int, ack_seq: int, hold_ms: int, players: Array) -> PackedByteArray:
 	var b := StreamPeerBuffer.new()
 	b.put_u8(TYPE_SNAPSHOT)
+	b.put_u8(config[0])
+	b.put_u8(config[1])
+	b.put_u16(int(round(config[2] * 100.0)))
 	b.put_u32(tick)
 	b.put_u32(ack_seq)
 	b.put_u16(clampi(hold_ms, 0, 65535))
@@ -70,7 +75,8 @@ static func encode_snapshot(tick: int, ack_seq: int, hold_ms: int, players: Arra
 
 
 static func decode_snapshot(b: StreamPeerBuffer) -> Dictionary:
-	var snap := {tick = b.get_u32(), ack = b.get_u32(), hold_ms = b.get_u16(), players = {}}
+	var config := [b.get_u8(), b.get_u8(), b.get_u16() / 100.0]
+	var snap := {config = config, tick = b.get_u32(), ack = b.get_u32(), hold_ms = b.get_u16(), players = {}}
 	var n := b.get_u8()
 	for i in n:
 		var id := b.get_u32()

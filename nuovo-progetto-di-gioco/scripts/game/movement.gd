@@ -6,15 +6,24 @@ extends RefCounted
 const PlayerState = preload("res://scripts/game/player_state.gd")
 const InputCmd = preload("res://scripts/game/input_cmd.gd")
 
-const TICK_RATE := 60
-const DT := 1.0 / TICK_RATE
+## Frequenza della simulazione: la imposta NetConfig (64 Hz per il preset cs2).
+## Client e server devono usare lo stesso valore, altrimenti la predizione diverge.
+static var tick_rate := 64
 const ARENA := Rect2(0, 0, 800, 600)
 const PLAYER_SIZE := 32.0
 const MAX_SPEED := 300.0
 const ACCELERATE := 10.0  # come pm_accelerate di Quake III
 const FRICTION := 6.0     # come pm_friction
 const STOP_SPEED := 100.0
-const FIRE_COOLDOWN_TICKS := 10
+const FIRE_COOLDOWN_MS := 160.0
+
+
+static func dt() -> float:
+	return 1.0 / tick_rate
+
+
+static func fire_cooldown_ticks() -> int:
+	return int(round(FIRE_COOLDOWN_MS * tick_rate / 1000.0))
 
 
 static func wish_dir(buttons: int) -> Vector2:
@@ -61,6 +70,6 @@ static func simulate_move(state: PlayerState, cmd: InputCmd, delta: float) -> bo
 	if state.cooldown > 0:
 		state.cooldown -= 1
 	elif cmd.buttons & InputCmd.FIRE:
-		state.cooldown = FIRE_COOLDOWN_TICKS
+		state.cooldown = fire_cooldown_ticks()
 		fired = true
 	return fired

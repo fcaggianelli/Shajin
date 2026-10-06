@@ -7,6 +7,7 @@ const InputCmd = preload("res://scripts/game/input_cmd.gd")
 const Player = preload("res://scripts/game/player.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
+const NetConfig = preload("res://scripts/net/net_config.gd")
 const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
 
@@ -45,7 +46,6 @@ var snapshots: Array = []         # ultimi snapshot, ordinati per tick
 var remote_positions := {}        # id -> Vector2 come visualizzato
 
 # --- Interpolazione delle entità remote ---
-const INTERP_DELAY_TICKS := 6     # 100 ms a 60 Hz = 2 intervalli di snapshot
 var server_tick_est := 0.0        # stima del tick server "attuale" (avanza di 1 per tick)
 var render_tick := 0.0            # istante (in tick server) in cui mostriamo i remoti
 
@@ -112,7 +112,7 @@ func _physics_process(_delta: float) -> void:
 		return  # aspettiamo il primo snapshot per conoscere lo spawn
 
 	server_tick_est += 1.0
-	render_tick = server_tick_est - INTERP_DELAY_TICKS
+	render_tick = server_tick_est - NetConfig.interp_ticks()
 	_update_remotes()
 
 	# 1. campiona l'input di questo tick
@@ -126,7 +126,7 @@ func _physics_process(_delta: float) -> void:
 
 	# 2. prediction: applicalo subito, senza aspettare il server
 	if prediction_enabled:
-		if Movement.simulate_move(state, cmd, Movement.DT):
+		if Movement.simulate_move(state, cmd, Movement.dt()):
 			_add_tracer(cmd.aim)
 		predicted[seq] = state.pos
 
@@ -156,6 +156,9 @@ func _on_snapshot(snap: Dictionary) -> void:
 	if snap.tick <= last_snap_tick:
 		return  # vecchio o fuori ordine
 	last_snap_tick = snap.tick
+	var cfg: Array = snap.config
+	if cfg[0] != NetConfig.tick_rate or cfg[1] != NetConfig.snapshot_every or not is_equal_approx(cfg[2], NetConfig.interp_ms):
+		NetConfig.apply(cfg[0], cfg[1], cfg[2])  # adotta il preset del server
 	snapshots.append(snap)
 	# Orologio: inseguiamo dolcemente il tick degli snapshot ricevuti.
 	var drift: float = snap.tick - server_tick_est
@@ -207,7 +210,7 @@ func _on_snapshot(snap: Dictionary) -> void:
 		var before := state.pos
 		state = server_state.copy()
 		for cmd in pending:
-			Movement.simulate_move(state, cmd, Movement.DT)
+			Movement.simulate_move(state, cmd, Movement.dt())
 			predicted[cmd.seq] = state.pos
 		correction_max = maxf(correction_max, before.distance_to(state.pos))
 

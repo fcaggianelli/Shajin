@@ -2,6 +2,8 @@ extends CanvasLayer
 ## Overlay di debug del client. F3 mostra/nasconde, F4 prediction,
 ## F5 reconciliation, F6 ridondanza degli input.
 
+const NetConfig = preload("res://scripts/net/net_config.gd")
+
 var client  # scripts/net/client.gd
 var _label := Label.new()
 
@@ -35,7 +37,8 @@ func _process(_delta: float) -> void:
 		"errore predetto/server: %.2f px" % c.err_last,
 		"  medio %.2f   max %.2f   (%d misure)" % [avg, c.err_max, c.err_count],
 		"correzione visiva max: %.2f px" % c.correction_max,
-		"render tick %.1f   (ritardo %d ms)" % [c.render_tick, c.INTERP_DELAY_TICKS * 1000 / 60],
+		"tick %d Hz  snapshot %.0f Hz  interp %.2f ms" % [NetConfig.tick_rate, NetConfig.snapshot_rate(), NetConfig.interp_ms],
+		"render tick %.1f" % c.render_tick,
 		"rete sim: lag %d ms  jitter %d ms  loss %d%%" % [c.sim.lag_ms, c.sim.jitter_ms, c.sim.loss * 100],
 		"persi: out %d  in %d" % [c.sim.dropped_out, c.sim.dropped_in],
 		"colpi messi a segno %d   subiti %d" % [c.my_hits, c.my_deaths],

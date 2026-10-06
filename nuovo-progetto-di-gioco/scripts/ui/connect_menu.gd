@@ -3,19 +3,21 @@ extends CenterContainer
 ## (server + client nello stesso processo). Ricorda l'ultimo indirizzo usato.
 
 signal join_requested(host: String, port: int)
-signal host_requested(port: int)
+signal host_requested(port: int, preset: String)
 
 const CONFIG_PATH := "user://connect.cfg"
+const NetConfig = preload("res://scripts/net/net_config.gd")
 
 var _host := LineEdit.new()
 var _port := LineEdit.new()
 var _status := Label.new()
+var _preset := OptionButton.new()
 
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(320, 0)
+	box.custom_minimum_size = Vector2(380, 0)
 	box.add_theme_constant_override("separation", 8)
 	add_child(box)
 
@@ -39,6 +41,21 @@ func _ready() -> void:
 	join.text = "Connetti"
 	join.pressed.connect(_on_join)
 	box.add_child(join)
+
+	for name in NetConfig.PRESETS:
+		var p: Dictionary = NetConfig.PRESETS[name]
+		_preset.add_item("%s  (tick %d, snapshot %d Hz, interp %.0f ms)" % [name, p.tick_rate, p.snapshot_rate, p.interp_ms])
+		_preset.set_item_metadata(_preset.item_count - 1, name)
+		if name == cfg.get_value("last", "preset", NetConfig.DEFAULT):
+			_preset.select(_preset.item_count - 1)
+	var preset_row := HBoxContainer.new()
+	var preset_label := Label.new()
+	preset_label.text = "Preset"
+	preset_label.custom_minimum_size = Vector2(80, 0)
+	_preset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preset_row.add_child(preset_label)
+	preset_row.add_child(_preset)
+	box.add_child(preset_row)
 
 	var host := Button.new()
 	host.text = "Ospita partita (server su 0.0.0.0 + gioca)"
@@ -77,6 +94,7 @@ func _save(host: String, port: int) -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("last", "host", host)
 	cfg.set_value("last", "port", port)
+	cfg.set_value("last", "preset", _preset.get_selected_metadata())
 	cfg.save(CONFIG_PATH)
 
 
@@ -97,4 +115,4 @@ func _on_host() -> void:
 	if port == 0:
 		return
 	_save(_host.text.strip_edges(), port)
-	host_requested.emit(port)
+	host_requested.emit(port, _preset.get_selected_metadata())

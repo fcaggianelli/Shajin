@@ -10,7 +10,7 @@ const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
 const Weapon = preload("res://scripts/game/weapon.gd")
 
-const SNAPSHOT_EVERY := Movement.TICK_RATE / 20  # 60 Hz / 20 Hz = 3 tick
+const NetConfig = preload("res://scripts/net/net_config.gd")
 const HISTORY_SECONDS := 1.0
 const SPAWNS := [Vector2(150, 300), Vector2(650, 300), Vector2(400, 150), Vector2(400, 450)]
 
@@ -44,6 +44,8 @@ func start(port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -
 	sim = NetSim.new(_peer, seed_value)
 	sim.configure(lag, jitter, loss)
 	print("[server] in ascolto su %s:%d (lag %d ms, jitter %d ms, loss %d%%)" % [bind_ip, port, lag, jitter, loss * 100])
+	print("[server] preset %s: tick %d Hz, snapshot %.0f Hz, interp %.2f ms, unlag max %d ms" % [
+		NetConfig.preset_name, NetConfig.tick_rate, NetConfig.snapshot_rate(), NetConfig.interp_ms, NetConfig.max_unlag_ms])
 	print("[server] IP locali: %s" % ", ".join(local_ipv4()))
 	return OK
 
@@ -83,7 +85,7 @@ func _physics_process(_delta: float) -> void:
 	for pkt in sim.poll():
 		_handle_packet(pkt[0], pkt[1])
 	tick += 1
-	if tick % SNAPSHOT_EVERY == 0:
+	if tick % NetConfig.snapshot_every == 0:
 		_record_history()
 		_send_snapshots()
 
@@ -96,7 +98,7 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 	for cmd in Protocol.decode_input(opened[1]):
 		if cmd.seq <= c.last_seq:
 			continue  # duplicato (ridondanza) o vecchio
-		var fired := Movement.simulate_move(c.state, cmd, Movement.DT)
+		var fired := Movement.simulate_move(c.state, cmd, Movement.dt())
 		if fired:
 			_on_fire(c, cmd)
 		c.last_seq = cmd.seq
@@ -106,8 +108,8 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 func _on_fire(shooter: Dictionary, cmd) -> void:
 	var origin: Vector2 = shooter.state.pos  # il tiratore è nel "presente", come nella sua predizione
 	var dir := Vector2.from_angle(cmd.aim)
-	# Riavvolgi: non più indietro della cronologia (~1 s) né nel futuro.
-	var t := clampf(cmd.view_tick, tick - HISTORY_SECONDS * Movement.TICK_RATE, tick)
+	# Riavvolgi: non più indietro di max_unlag (200 ms in cs2, come sv_maxunlag) né nel futuro.
+	var t := clampf(cmd.view_tick, tick - NetConfig.max_unlag_ms * NetConfig.tick_rate / 1000.0, tick)
 	var rewound := {}
 	var current := {}
 	for id in clients:
@@ -136,18 +138,19 @@ func _record_history() -> void:
 	for id in clients:
 		pos[id] = clients[id].state.pos
 	history.append({tick = tick, pos = pos})
-	var max_entries := int(HISTORY_SECONDS * Movement.TICK_RATE / SNAPSHOT_EVERY) + 1
+	var max_entries := int(HISTORY_SECONDS * NetConfig.snapshot_rate()) + 1
 	while history.size() > max_entries:
 		history.pop_front()
 
 
 func _send_snapshots() -> void:
 	var players := clients.values()
+	var config := [NetConfig.tick_rate, NetConfig.snapshot_every, NetConfig.interp_ms]
 	var now := Time.get_ticks_usec()
 	for id in clients:
 		var c: Dictionary = clients[id]
 		var hold_ms := int((now - c.applied_usec) / 1000) if c.last_seq > 0 else 0
-		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players))
+		sim.send(id, Protocol.encode_snapshot(config, tick, c.last_seq, hold_ms, players))
 
 
 ## Posizione di `id` al tick (frazionario) `t`, ricostruita dalla cronologia

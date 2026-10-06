@@ -22,7 +22,7 @@ window/stretch/aspect="expand"
 
 [physics]
 
-common/physics_ticks_per_second=60
+common/physics_ticks_per_second=64
 common/max_physics_steps_per_frame=8
 
 3d/physics_engine="Jolt Physics"

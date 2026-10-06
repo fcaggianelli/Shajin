@@ -8,6 +8,7 @@ extends Node
 const Server = preload("res://scripts/net/server.gd")
 const Client = preload("res://scripts/net/client.gd")
 const InputCmd = preload("res://scripts/game/input_cmd.gd")
+const NetConfig = preload("res://scripts/net/net_config.gd")
 
 const LAG_MS := 100.0
 const JITTER_MS := 10.0
@@ -30,13 +31,24 @@ func _ready() -> void:
 	var ok := true
 	var scenarios := [
 		{name = "A  prediction+reconciliation, ridondanza ON", assert_error = true},
-		{name = "B  ridondanza OFF (il server perde input)", redundancy = false},
-		{name = "C  ridondanza OFF + reconciliation OFF", redundancy = false, reconciliation = false, expect_drift = true},
+		{name = "B  ridondanza OFF (il server perde input)", redundancy = false, only = "cs2"},
+		{name = "C  ridondanza OFF + reconciliation OFF", redundancy = false, reconciliation = false, expect_drift = true, only = "cs2"},
 	]
-	print("\n=== Netcode test: lag %d ms/direzione, jitter %d ms, loss %d%%/direzione ===" % [LAG_MS, JITTER_MS, LOSS * 100])
-	for sc in scenarios:
-		ok = (await _run_movement(sc)) and ok
-	ok = (await _run_lag_comp()) and ok
+	for preset in ["cs2", "q3"]:
+		NetConfig.apply_preset(preset)
+		print("\n=== Preset %s (tick %d Hz, snapshot %.0f Hz, interp %.2f ms, unlag %d ms) | lag %d ms/direzione, jitter %d ms, loss %d%%/direzione ===" % [
+			preset, NetConfig.tick_rate, NetConfig.snapshot_rate(), NetConfig.interp_ms, NetConfig.max_unlag_ms, LAG_MS, JITTER_MS, LOSS * 100])
+		for sc in scenarios:
+			if sc.get("only", preset) == preset:
+				ok = (await _run_movement(sc)) and ok
+		# La rewind richiesta è circa RTT + interp. Con 100 ms/direzione (ping ~255 ms)
+		# supera i 200 ms di sv_maxunlag del preset cs2: lì il colpo non è più del
+		# tutto compensato, come in CS2. Si verifica quindi a 50 ms/direzione e si
+		# riporta il caso a 100 ms come informativo.
+		var within := NetConfig.max_unlag_ms >= 1000.0
+		ok = (await _run_lag_comp(LAG_MS, within)) and ok
+		if not within:
+			ok = (await _run_lag_comp(50.0, true)) and ok
 	print("\nRISULTATO: %s" % ("PASS" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -146,8 +158,9 @@ func _run_movement(sc: Dictionary) -> bool:
 ## client 1 COME LO VEDE (posizione interpolata, ~100 ms + latenza nel passato).
 ## Il client 1 corre su e giù a velocità massima. Il server conta sia i colpi
 ## validi riavvolgendo (lag compensation) sia quelli che varrebbero senza.
-func _run_lag_comp() -> bool:
-	print("\n--- Scenario D  hitscan con lag compensation ---")
+func _run_lag_comp(lag_ms: float, check_hit_rate: bool) -> bool:
+	print("\n--- Scenario D  hitscan con lag compensation (lag %d ms/direzione%s) ---" % [
+		lag_ms, "" if check_hit_rate else ", oltre sv_maxunlag: solo informativo"])
 	var port := 30000 + randi() % 20000
 	var server := Server.new()
 	add_child(server)
@@ -158,7 +171,7 @@ func _run_lag_comp() -> bool:
 	var runner := Client.new()
 	for c in [shooter, runner]:
 		add_child(c)
-		c.start("127.0.0.1", port, LAG_MS, JITTER_MS, LOSS, 99 + c.get_index())
+		c.start("127.0.0.1", port, lag_ms, JITTER_MS, LOSS, 99 + c.get_index())
 	shooter.input_provider = func(c, seq: int) -> Dictionary:
 		if seq > SHOOT_TICKS or seq % 12 != 0 or not c.remote_positions.has(runner.my_id):
 			return {buttons = 0, aim = 0.0}
@@ -190,7 +203,7 @@ func _run_lag_comp() -> bool:
 	if server.shots < 30:
 		print("  FAIL: troppi pochi colpi sparati")
 		ok = false
-	if rate_lc < MIN_LAG_COMP_HIT_RATE:
+	if check_hit_rate and rate_lc < MIN_LAG_COMP_HIT_RATE:
 		print("  FAIL: hit rate con lag compensation %.2f < %.2f" % [rate_lc, MIN_LAG_COMP_HIT_RATE])
 		ok = false
 	if final_err > MAX_FINAL_ERROR:
