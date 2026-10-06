@@ -7,7 +7,7 @@ var _label := Label.new()
 
 
 func _ready() -> void:
-	_label.position = Vector2(840, 20)
+	_label.position = Vector2(836, 20)
 	_label.add_theme_font_size_override("font_size", 14)
 	add_child(_label)
 
@@ -28,7 +28,8 @@ func _process(_delta: float) -> void:
 	var c = client
 	var on := func(b: bool) -> String: return "ON" if b else "OFF"
 	var avg: float = c.err_sum / c.err_count if c.err_count > 0 else 0.0
-	_label.text = "\n".join([
+	var lines := [c.info_text] if c.info_text != "" else []
+	_label.text = "\n".join(lines + [
 		"id %d   ping %d ms" % [c.my_id, c.ping_ms],
 		"input in buffer: %d   (seq %d, ack %d)" % [c.pending.size(), c.seq, c.last_ack],
 		"errore predetto/server: %.2f px" % c.err_last,

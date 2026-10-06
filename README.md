@@ -11,7 +11,10 @@ Tutti i comandi vanno lanciati dalla cartella `nuovo-progetto-di-gioco/`.
 Gli argomenti del gioco vanno dopo `--`; `--headless` è il flag di Godot.
 
 ```sh
-# Server dedicato (headless)
+# Client con menu: campi IP e porta, oppure "Ospita partita" (server + gioca)
+godot --path .
+
+# Server dedicato (headless), in ascolto su 0.0.0.0 (tutte le interfacce IPv4)
 godot --headless --path . -- --server --port=27960
 
 # Client (finestra); qui con 50 ms per direzione, 10 ms di jitter, 5% di perdita
@@ -24,7 +27,23 @@ godot --headless --path . -- --server --no-lagcomp
 godot --headless --path . res://tests/test_netcode.tscn
 ```
 
-Senza argomenti: in headless parte il server, con finestra parte il client.
+Senza argomenti: in headless parte il server, con finestra il menu di connessione.
+Con `--host=...` il client si connette direttamente senza menu. `--bind=IP`
+cambia l'indirizzo d'ascolto del server (default `0.0.0.0`).
+
+## Giocare con un amico
+
+1. Chi ospita apre il gioco e preme **Ospita partita**, oppure lancia il server
+   dedicato. L'overlay (e la console del server) mostrano gli IP locali.
+2. **Stessa rete (LAN)**: l'amico inserisce l'IP locale dell'host (es.
+   `192.168.1.10`) e la porta, e preme **Connetti**.
+3. **Via Internet**: sul router dell'host serve il port forwarding della porta
+   **UDP** (default 27960) verso il PC dell'host; l'amico usa l'IP pubblico
+   dell'host. Anche il firewall del PC deve lasciar passare la porta UDP
+   (Windows lo chiede al primo avvio). In alternativa una VPN tipo
+   Tailscale/ZeroTier evita il port forwarding: si usa l'IP della VPN.
+4. Se il server non risponde entro 5 s il client torna al menu con l'errore.
+   L'ultimo IP/porta usati vengono ricordati.
 
 Controlli del client: WASD/frecce per muoversi, click sinistro per sparare.
 F3 mostra/nasconde l'overlay (ping, input in buffer, errore predetto/server).
@@ -50,6 +69,7 @@ spenta (F4) il movimento risponde in ritardo di un RTT e scatta a 20 Hz.
 | `scripts/net/net_sim.gd` | simulatore di latenza, jitter e perdita |
 | `scripts/net/protocol.gd` | formato dei pacchetti in byte |
 | `scripts/net/debug_overlay.gd` | overlay F3 |
+| `scripts/ui/connect_menu.gd` | menu iniziale: IP, porta, Connetti / Ospita |
 | `scenes/main.tscn`, `scripts/main.gd` | entry point, parsing della riga di comando |
 | `tests/test_netcode.tscn` | test headless |
 
