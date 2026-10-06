@@ -21,6 +21,13 @@ const MAX_FINAL_ERROR := 0.01  # px: client e server devono coincidere alla fine
 const MAX_INTERP_MEAN_ERROR := 5.0  # px: remoti interpolati vs verità del server
 const MIN_LAG_COMP_HIT_RATE := 0.9  # fase 2: mirando dove si VEDE il bersaglio si deve colpire
 const SHOOT_TICKS := 600
+# Scenario E (peeker's advantage): connessione "da Internet" realistica.
+const PEEK_LAG_MS := 30.0      # per direzione: ping ~60 ms + quantizzazione
+const PEEK_JITTER_MS := 5.0
+const PEEK_LOSS := 0.01
+const PEEK_EPISODES := 8
+const HOLD_POS := Vector2(120, 520)  # chi tiene l'angolo (vedi Map)
+const PEEK_POS := Vector2(520, 520)  # chi sbuca da dietro il muro
 
 const PATTERN := [  # client 0: [buttons, durata in tick]
 	[InputCmd.RIGHT, 50], [InputCmd.DOWN, 40], [InputCmd.LEFT | InputCmd.UP, 60],
@@ -35,6 +42,7 @@ func _ready() -> void:
 		{name = "B  ridondanza OFF (il server perde input)", redundancy = false, only = "cs2"},
 		{name = "C  ridondanza OFF + reconciliation OFF", redundancy = false, reconciliation = false, expect_drift = true, only = "cs2"},
 	]
+	var peek := {}
 	for preset in ["cs2", "q3"]:
 		NetConfig.apply_preset(preset)
 		print("\n=== Preset %s (tick %d Hz, snapshot %.0f Hz, interp %.2f ms, unlag %d ms) | lag %d ms/direzione, jitter %d ms, loss %d%%/direzione ===" % [
@@ -50,6 +58,14 @@ func _ready() -> void:
 		ok = (await _run_lag_comp(LAG_MS, within)) and ok
 		if not within:
 			ok = (await _run_lag_comp(50.0, true)) and ok
+		peek[preset] = await _run_peek()
+		ok = peek[preset] >= 0.0 and ok
+
+	# Il peeker deve avere un vantaggio, e il preset competitivo deve ridurlo.
+	print("\nPeeker's advantage medio: cs2 %.0f ms, q3 %.0f ms" % [peek.cs2, peek.q3])
+	if not (peek.cs2 > 0.0 and peek.q3 > peek.cs2):
+		print("  FAIL: atteso 0 < vantaggio cs2 < vantaggio q3")
+		ok = false
 	print("\nRISULTATO: %s" % ("PASS" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)
 
@@ -220,6 +236,125 @@ func _run_lag_comp(lag_ms: float, check_hit_rate: bool) -> bool:
 	server.stop()
 	server.queue_free()
 	return ok
+
+
+## Scenario E: peeker's advantage. H sta fermo a HOLD_POS e tiene l'angolo; P è
+## nascosto dietro il muro a PEEK_POS, sbuca verso l'alto, spara appena vede H e
+## rientra. Entrambi i bot reagiscono in 0 ms (sparano al primo frame in cui
+## vedono l'altro). Per ogni peek misuriamo, in tempo reale:
+##   - quando il SERVER ha per la prima volta linea di vista tra i due
+##   - quando P vede H sul suo schermo (posizione predetta vs H interpolato)
+##   - quando H vede P sul suo schermo (posizione propria vs P interpolato)
+##   - chi dei due va a segno per primo sul server.
+## Ritorna il vantaggio medio in ms (tH - tP), o -1 se lo scenario fallisce.
+func _run_peek() -> float:
+	print("\n--- Scenario E  peeker's advantage (lag %d ms/direzione, jitter %d ms, loss %d%%) ---" % [
+		PEEK_LAG_MS, PEEK_JITTER_MS, PEEK_LOSS * 100])
+	var port := 30000 + randi() % 20000
+	var server := Server.new()
+	server.spawns = [HOLD_POS, PEEK_POS]
+	server.knockback = 0.0  # niente spinte: le posizioni restano quelle del copione
+	add_child(server)
+	if server.start(port) != OK:
+		print("FAIL: server non avviato")
+		return -1.0
+	var holder := Client.new()
+	var peeker := Client.new()
+	# Connessione in ordine, così holder prende HOLD_POS e peeker PEEK_POS.
+	for c in [holder, peeker]:
+		add_child(c)
+		c.start("127.0.0.1", port, PEEK_LAG_MS, PEEK_JITTER_MS, PEEK_LOSS, 7 + c.get_index())
+		c.input_provider = func(_c, _s): return {buttons = 0, aim = 0.0}
+		var waited := 0
+		while not c.is_ready():
+			await get_tree().physics_frame
+			waited += 1
+			if waited > 600:
+				print("FAIL: i client non si sono connessi")
+				return -1.0
+
+	holder.input_provider = func(c, _seq: int) -> Dictionary:
+		if c.can_see(peeker.my_id):
+			return {buttons = InputCmd.FIRE, aim = (c.remote_positions[peeker.my_id] - c.state.pos).angle()}
+		return {buttons = 0, aim = 0.0}
+
+	var p := {phase = "hide", t = 0, episode = 0}
+	peeker.input_provider = func(c, _seq: int) -> Dictionary:
+		p.t += 1
+		var sees: bool = c.can_see(holder.my_id)
+		match p.phase:
+			"hide":
+				if p.t > 40 and p.episode < PEEK_EPISODES:
+					p.phase = "peek"
+					p.t = 0
+					p.episode += 1
+				return {buttons = 0, aim = 0.0}
+			"peek":
+				if sees:
+					p.phase = "shoot"
+					p.t = 0
+					return {buttons = InputCmd.FIRE, aim = (c.remote_positions[holder.my_id] - c.state.pos).angle()}
+				return {buttons = InputCmd.UP, aim = 0.0}
+			"shoot":
+				if p.t > 8:
+					p.phase = "retreat"
+				return {buttons = 0, aim = 0.0}
+			_:  # retreat
+				if c.state.pos.y >= PEEK_POS.y - 1.0:
+					p.phase = "hide"
+					p.t = 0
+				return {buttons = InputCmd.DOWN, aim = 0.0}
+
+	var episodes: Array = []
+	var cur := {}
+	while p.episode < PEEK_EPISODES or p.phase != "hide" or p.t < 40:
+		await get_tree().physics_frame
+		var now := Time.get_ticks_msec()
+		if p.phase == "peek" and cur.get("n", 0) != p.episode:
+			cur = {n = p.episode, start_usec = Time.get_ticks_usec()}
+			episodes.append(cur)
+		if cur.is_empty():
+			continue
+		var h_srv: Vector2 = server.clients[holder.my_id].state.pos
+		var p_srv: Vector2 = server.clients[peeker.my_id].state.pos
+		if not cur.has("server") and Map.line_of_sight(h_srv, p_srv):
+			cur.server = now
+		if not cur.has("peeker") and peeker.can_see(holder.my_id):
+			cur.peeker = now
+		if not cur.has("holder") and holder.can_see(peeker.my_id):
+			cur.holder = now
+
+	var advantages: Array = []
+	var peeker_first := 0
+	for e in episodes:
+		var first := "nessuno"
+		for h in server.hit_log:
+			if h[0] >= e.start_usec:
+				first = "PEEKER" if h[1] == peeker.my_id else "holder"
+				break
+		if first == "PEEKER":
+			peeker_first += 1
+		if e.has("server") and e.has("peeker") and e.has("holder"):
+			advantages.append(float(e.holder - e.peeker))
+			print("peek %d: P vede H a %+4d ms, H vede P a %+4d ms (rispetto al server) -> vantaggio %3d ms | primo colpo: %s" % [
+				e.n, e.peeker - e.server, e.holder - e.server, e.holder - e.peeker, first])
+		else:
+			print("peek %d: incompleto %s" % [e.n, e])
+	var adv := _mean(advantages)
+	print("vantaggio medio del peeker: %.0f ms su %d peek | il peeker colpisce per primo in %d/%d" % [
+		adv, advantages.size(), peeker_first, episodes.size()])
+	for c in [holder, peeker]:
+		c.stop()
+		c.queue_free()
+	server.stop()
+	server.queue_free()
+	for i in 10:
+		await get_tree().physics_frame
+	if advantages.size() < PEEK_EPISODES - 1:
+		print("  FAIL: troppi peek non misurati")
+		return -1.0
+	print("Scenario: OK")
+	return adv
 
 
 static func _mean(a: Array) -> float:

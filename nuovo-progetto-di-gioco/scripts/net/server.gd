@@ -28,6 +28,8 @@ var lag_comp_enabled := true
 var shots := 0
 var hits_with_lag_comp := 0     # colpi che sarebbero andati a segno riavvolgendo
 var hits_without_lag_comp := 0  # colpi che sarebbero andati a segno senza riavvolgere
+var knockback := Weapon.KNOCKBACK
+var hit_log: Array = []  # [usec, shooter_id, target_id] per ogni colpo a segno
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
@@ -131,7 +133,8 @@ func _on_fire(shooter: Dictionary, cmd) -> void:
 		var target: Dictionary = clients[hit_id]
 		shooter.hits += 1
 		target.deaths += 1
-		target.state.vel += dir * Weapon.KNOCKBACK  # il client colpito non può predirlo: lo corregge la riconciliazione
+		target.state.vel += dir * knockback
+		hit_log.append([Time.get_ticks_usec(), shooter.id, hit_id])  # il client colpito non può predirlo: lo corregge la riconciliazione
 
 
 func _record_history() -> void:
