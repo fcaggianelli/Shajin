@@ -9,6 +9,12 @@ const Level = preload("res://scripts/game/level.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
 const NetConfig = preload("res://scripts/net/net_config.gd")
+const Weapon = preload("res://scripts/game/weapon.gd")
+const InputCmd = preload("res://scripts/game/input_cmd.gd")
+
+## Tolleranza tra l'origine del raggio dichiarata dal client e l'occhio calcolato
+## dal server per lo stesso comando (identici se la predizione è esatta).
+const MAX_ORIGIN_ERROR := 0.3
 
 const MAX_PLAYERS := 8
 
@@ -21,6 +27,15 @@ var clients := {}
 ## Cronologia agli istanti degli snapshot (~1 s): [{tick, players: {id: PlayerState}}].
 ## È esattamente ciò che i client interpolano: serve al rewind della fase 3.
 var history: Array = []
+
+# --- Arma ---
+var lag_comp_enabled := true
+var next_kill_id := 1
+var kills: Array = []           # [kill_id, killer, victim], le ultime vanno negli snapshot
+var shot_log: Array = []        # un Dictionary per ogni sparo accettato (statistiche/test)
+var rejected_cooldown := 0      # FIRE arrivati prima della fine del cooldown
+var rejected_origin := 0        # origine o direzione del raggio non credibili
+var rewind_clamped := 0         # colpi con latenza oltre MAX_REWIND_MS (rewind limitato)
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
@@ -82,7 +97,12 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 	for cmd in Protocol.decode_input(opened[1]):
 		if cmd.seq <= c.last_seq:
 			continue  # duplicato (ridondanza) o vecchio
-		Movement.simulate_move(c.state, cmd, Movement.DT)
+		var wants_fire: bool = cmd.buttons & InputCmd.FIRE != 0 and c.state.alive
+		var fired := Movement.simulate_move(c.state, cmd, Movement.DT)
+		if fired:
+			_on_fire(c, cmd)
+		elif wants_fire:
+			rejected_cooldown += 1  # troppo presto: il cooldown (1 s) non è finito
 		c.last_seq = cmd.seq
 		c.applied_usec = Time.get_ticks_usec()
 
@@ -138,6 +158,84 @@ static func interpolate(a: Dictionary, b: Dictionary, id: int, t: float) -> Vari
 	return s
 
 
+## Sparo hitscan con lag compensation.
+## Il comando porta shot_time = tick server che il client stimava di vivere; il
+## client vedeva gli altri a shot_time - INTERP. La latenza compensata
+## (tick - shot_time) è limitata a MAX_REWIND_MS: oltre, si usa il limite.
+func _on_fire(shooter: Dictionary, cmd) -> void:
+	var eye := Movement.eye(shooter.state)
+	var dir: Vector3 = cmd.shot_dir
+	if cmd.shot_origin.distance_to(eye) > MAX_ORIGIN_ERROR or absf(dir.length() - 1.0) > 0.01:
+		rejected_origin += 1
+		return
+	dir = dir.normalized()
+	var interp := NetConfig.ms_to_ticks(NetConfig.INTERP_MS)
+	var max_latency := NetConfig.ms_to_ticks(NetConfig.MAX_REWIND_MS)
+	var latency := maxf(tick - cmd.shot_time, 0.0)
+	var clamped := latency > max_latency
+	if clamped:
+		rewind_clamped += 1
+	var t := tick - minf(latency, max_latency) - interp
+
+	var rewound := _targets_at(shooter.id, t)
+	var result := Weapon.trace(cmd.shot_origin, dir, rewound if lag_comp_enabled else _targets_now(shooter.id))
+	shot_log.append({
+		shooter = shooter.id, tick = tick, seq = cmd.seq, latency_ms = latency * 1000.0 / NetConfig.TICK_RATE, clamped = clamped,
+		hit = result.id, blocked = result.blocked_id,
+		# solo per statistiche: cosa sarebbe successo senza limite / senza lag compensation
+		hit_unlimited = Weapon.trace(cmd.shot_origin, dir, _targets_at(shooter.id, tick - latency - interp)).id,
+		hit_no_lag_comp = Weapon.trace(cmd.shot_origin, dir, _targets_now(shooter.id)).id,
+	})
+	if result.id != 0:
+		_kill(shooter, clients[result.id])
+
+
+## Bersagli validi (vivi, non protetti) riavvolti al tick t: {id: piedi}.
+func _targets_at(shooter_id: int, t: float) -> Dictionary:
+	var out := {}
+	for id in clients:
+		if id == shooter_id or not _can_be_hit(clients[id]):
+			continue
+		var s = state_at(id, t)
+		if s != null and s.alive:
+			out[id] = s.pos
+	return out
+
+
+func _targets_now(shooter_id: int) -> Dictionary:
+	var out := {}
+	for id in clients:
+		if id != shooter_id and _can_be_hit(clients[id]):
+			out[id] = clients[id].state.pos
+	return out
+
+
+func _can_be_hit(c: Dictionary) -> bool:
+	return c.state.alive and tick >= c.protect_until
+
+
+## Il server decide l'uccisione; la comunica a tutti negli snapshot.
+func _kill(killer: Dictionary, victim: Dictionary) -> void:
+	victim.state.alive = false
+	victim.state.vel = Vector3.ZERO
+	victim.deaths += 1
+	killer.score += 1
+	kills.append([next_kill_id, killer.id, victim.id])
+	next_kill_id = (next_kill_id % 65535) + 1
+	while kills.size() > 8:
+		kills.pop_front()
+	print("[server] %d ha ucciso %d" % [killer.id, victim.id])
+
+
+## Riporta in vita `id` in `pos` (usato dal ciclo di respawn e dai test).
+func respawn_at(id: int, pos: Vector3) -> void:
+	var s: PlayerState = clients[id].state
+	s.pos = pos
+	s.vel = Vector3.ZERO
+	s.alive = true
+	s.on_ground = false
+
+
 func _snapshot_players() -> Array:
 	var out := []
 	for id in clients:
@@ -153,4 +251,4 @@ func _send_snapshots() -> void:
 	for id in clients:
 		var c: Dictionary = clients[id]
 		var hold_ms := int((now - c.applied_usec) / 1000) if c.last_seq > 0 else 0
-		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players, []))
+		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players, kills.slice(-4)))
