@@ -26,6 +26,7 @@ const PEEK_LAG_MS := 30.0      # per direzione: ping ~60 ms + quantizzazione
 const PEEK_JITTER_MS := 5.0
 const PEEK_LOSS := 0.01
 const PEEK_EPISODES := 8
+const MAX_LATE_REVEAL := 0.02  # culling: al massimo il 2% dei tick visibili senza dati (snapshot persi)
 const HOLD_POS := Vector2(120, 520)  # chi tiene l'angolo (vedi Map)
 const PEEK_POS := Vector2(520, 520)  # chi sbuca da dietro il muro
 
@@ -58,8 +59,13 @@ func _ready() -> void:
 		ok = (await _run_lag_comp(LAG_MS, within)) and ok
 		if not within:
 			ok = (await _run_lag_comp(50.0, true)) and ok
-		peek[preset] = await _run_peek()
-		ok = peek[preset] >= 0.0 and ok
+		var r: Dictionary = await _run_peek(true)
+		ok = r.ok and ok
+		peek[preset] = r.adv
+		if preset == "cs2":
+			var off: Dictionary = await _run_peek(false)  # informativo: cosa succede senza culling
+			print("Culling cs2: vantaggio del peeker %.0f ms con culling, %.0f ms senza | fughe %d/%d tick con culling, %d/%d senza" % [
+				r.adv, off.adv, r.leak, r.hide_ticks, off.leak, off.hide_ticks])
 
 	# Il peeker deve avere un vantaggio, e il preset competitivo deve ridurlo.
 	print("\nPeeker's advantage medio: cs2 %.0f ms, q3 %.0f ms" % [peek.cs2, peek.q3])
@@ -247,17 +253,25 @@ func _run_lag_comp(lag_ms: float, check_hit_rate: bool) -> bool:
 ##   - quando H vede P sul suo schermo (posizione propria vs P interpolato)
 ##   - chi dei due va a segno per primo sul server.
 ## Ritorna il vantaggio medio in ms (tH - tP), o -1 se lo scenario fallisce.
-func _run_peek() -> float:
-	print("\n--- Scenario E  peeker's advantage (lag %d ms/direzione, jitter %d ms, loss %d%%) ---" % [
-		PEEK_LAG_MS, PEEK_JITTER_MS, PEEK_LOSS * 100])
+##
+## Con il culling lato server misura anche:
+##   - fughe: tick in cui il peeker è fermo e nascosto dietro il muro ma il client
+##     di chi tiene l'angolo riceve comunque la sua posizione (wallhack possibile)
+##   - comparse in ritardo: tick in cui un avversario sarebbe visibile sullo schermo
+##     (linea di vista verso dove dovrebbe essere disegnato) ma non è nello snapshot.
+func _run_peek(cull: bool) -> Dictionary:
+	print("\n--- Scenario E  peeker's advantage, culling lato server %s (lag %d ms/direzione, jitter %d ms, loss %d%%) ---" % [
+		"ON" if cull else "OFF (solo informativo)", PEEK_LAG_MS, PEEK_JITTER_MS, PEEK_LOSS * 100])
+	var fail := {ok = false, adv = -1.0, leak = 0, hide_ticks = 0, late = 0, vis_ticks = 0}
 	var port := 30000 + randi() % 20000
 	var server := Server.new()
 	server.spawns = [HOLD_POS, PEEK_POS]
 	server.knockback = 0.0  # niente spinte: le posizioni restano quelle del copione
+	server.cull_enabled = cull
 	add_child(server)
 	if server.start(port) != OK:
 		print("FAIL: server non avviato")
-		return -1.0
+		return fail
 	var holder := Client.new()
 	var peeker := Client.new()
 	# Connessione in ordine, così holder prende HOLD_POS e peeker PEEK_POS.
@@ -271,7 +285,7 @@ func _run_peek() -> float:
 			waited += 1
 			if waited > 600:
 				print("FAIL: i client non si sono connessi")
-				return -1.0
+				return fail
 
 	holder.input_provider = func(c, _seq: int) -> Dictionary:
 		if c.can_see(peeker.my_id):
@@ -307,9 +321,26 @@ func _run_peek() -> float:
 
 	var episodes: Array = []
 	var cur := {}
+	var leak := 0
+	var hide_ticks := 0
+	var late := 0
+	var vis_ticks := 0
 	while p.episode < PEEK_EPISODES or p.phase != "hide" or p.t < 40:
 		await get_tree().physics_frame
 		var now := Time.get_ticks_msec()
+		# Fughe: peeker fermo e nascosto (fase hide, già fermo da 20 tick).
+		if p.phase == "hide" and p.t > 20:
+			hide_ticks += 1
+			if holder.remote_positions.has(peeker.my_id):
+				leak += 1
+		# Comparse in ritardo, per entrambi i punti di vista.
+		for pair in [[holder, peeker], [peeker, holder]]:
+			var v: Client = pair[0]
+			var truth = server.position_at(pair[1].my_id, v.render_tick)
+			if truth != null and Map.line_of_sight(v.state.pos, truth):
+				vis_ticks += 1
+				if not v.remote_positions.has(pair[1].my_id):
+					late += 1
 		if p.phase == "peek" and cur.get("n", 0) != p.episode:
 			cur = {n = p.episode, start_usec = Time.get_ticks_usec()}
 			episodes.append(cur)
@@ -343,6 +374,8 @@ func _run_peek() -> float:
 	var adv := _mean(advantages)
 	print("vantaggio medio del peeker: %.0f ms su %d peek | il peeker colpisce per primo in %d/%d" % [
 		adv, advantages.size(), peeker_first, episodes.size()])
+	print("fughe (peeker nascosto ma inviato): %d/%d tick | comparse in ritardo: %d/%d tick visibili" % [
+		leak, hide_ticks, late, vis_ticks])
 	for c in [holder, peeker]:
 		c.stop()
 		c.queue_free()
@@ -350,11 +383,18 @@ func _run_peek() -> float:
 	server.queue_free()
 	for i in 10:
 		await get_tree().physics_frame
+	var result := {ok = true, adv = adv, leak = leak, hide_ticks = hide_ticks, late = late, vis_ticks = vis_ticks}
 	if advantages.size() < PEEK_EPISODES - 1:
 		print("  FAIL: troppi peek non misurati")
-		return -1.0
-	print("Scenario: OK")
-	return adv
+		result.ok = false
+	if cull and leak > 0:
+		print("  FAIL: con il culling il client ha ricevuto un giocatore nascosto")
+		result.ok = false
+	if cull and late > vis_ticks * MAX_LATE_REVEAL:
+		print("  FAIL: troppe comparse in ritardo (%d > %.0f%% di %d)" % [late, MAX_LATE_REVEAL * 100, vis_ticks])
+		result.ok = false
+	print("Scenario: %s" % ("OK" if result.ok else "FAIL"))
+	return result
 
 
 static func _mean(a: Array) -> float:

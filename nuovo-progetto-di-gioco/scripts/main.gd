@@ -5,7 +5,8 @@ extends Node
 ##   godot --path .                                              (menu: IP e porta, oppure Ospita)
 ## Opzioni del simulatore di rete (per direzione): --lag=MS --jitter=MS --loss=0.05
 ## Server: --no-lagcomp disattiva la lag compensation dell'arma hitscan,
-##         --preset=cs2|q3 sceglie tick/snapshot/interpolazione (default cs2).
+##         --preset=cs2|q3 sceglie tick/snapshot/interpolazione (default cs2),
+##         --no-cull manda a tutti la posizione di tutti (niente anti-wallhack).
 
 const Server = preload("res://scripts/net/server.gd")
 const Client = preload("res://scripts/net/client.gd")
@@ -49,6 +50,7 @@ func _start_server(port: int, preset: String = "") -> Error:
 	_server = Server.new()
 	_server.bind_ip = args.get("bind", "0.0.0.0")
 	_server.lag_comp_enabled = not args.has("no-lagcomp")
+	_server.cull_enabled = not args.has("no-cull")
 	add_child(_server)
 	var p := _sim_params()
 	var err := _server.start(port, p[0], p[1], p[2])

@@ -24,8 +24,9 @@ godot --path . -- --client --host=127.0.0.1 --port=27960 --lag=50 --jitter=10 --
 # Server con i valori di Quake III invece di CS2 (default)
 godot --headless --path . -- --server --preset=q3
 
-# Server senza lag compensation (per confronto)
+# Server senza lag compensation / senza culling anti-wallhack (per confronto)
 godot --headless --path . -- --server --no-lagcomp
+godot --headless --path . -- --server --no-cull
 
 # Test (exit code 0 = PASS, 1 = FAIL)
 godot --headless --path . res://tests/test_netcode.tscn
@@ -92,10 +93,25 @@ compensato (come in CS2): il test lo mostra a 100 ms per direzione.
   Il test lo misura (scenario E): con ping ~60 ms il vantaggio è circa
   **120 ms con il preset cs2 e circa 200 ms con q3**. Il peeker colpisce per
   primo 8 volte su 8 con entrambi.
-- Scelta più semplice: la fog è solo visiva. Il server manda a tutti la posizione
-  di tutti, quindi un client modificato potrebbe fare wallhack. L'alternativa
-  anti-cheat è il culling lato server (non mandare chi non è visibile, con un
-  margine per evitare che compaia in ritardo), come fa Valorant.
+- **Culling lato server (anti-wallhack)**: la fog del client è solo grafica; per
+  impedire il wallhack il server manda a ogni client **solo i giocatori che
+  potrebbe vedere**. Un client modificato che spegne la fog (F7) non ha i dati
+  di chi è dietro un muro. `--no-cull` lo disattiva.
+  - Il test di visibilità è conservativo, come il "fog of war" di Valorant: se
+    il server usasse la linea di vista attuale, l'avversario arriverebbe in
+    ritardo (il client è avanti di ½ RTT con la prediction e mostra gli altri
+    nel passato), comparendo all'improvviso già in vista.
+  - Per questo il server confronta due "scatole": quella in cui il destinatario
+    può trovarsi sul proprio schermo (posizione → posizione + velocità × ritardo)
+    e quella in cui può vedere l'altro (posizione → posizione − velocità × ritardo).
+    Le scatole includono il corpo del giocatore + 8 px. Si testano angoli e centro
+    (25 raggi): basta una linea di vista libera per mandare il giocatore.
+  - Il ritardo di ciascun client è misurato dal server (`tick − view_tick` dei
+    suoi comandi, cioè RTT + interpolazione, limitato a 1 s): non serve fidarsi
+    del ping dichiarato dal client.
+  - Limite: chi è *quasi* visibile (vicino allo spigolo o in movimento verso
+    lo spigolo) viene mandato un po' prima; un wallhack vede quindi qualche
+    decina di ms in anticipo, ma mai chi è fermo al riparo.
 
 ## Struttura
 
@@ -183,28 +199,34 @@ comando e quella del server.
 | B: ridondanza OFF (solo cs2) | il server perde input, la predizione sbaglia; la reconciliation riporta a 0 |
 | C: ridondanza e reconciliation OFF (solo cs2) | informativo: la deriva resta |
 | D: hitscan | si mira al bersaglio interpolato (solo se visibile); hit rate con lag compensation ≥ 90% entro la finestra di unlag |
-| E: peeker's advantage | ping ~60 ms (30 ms/direzione, 5 ms jitter, 1% loss): vantaggio > 0 e minore con cs2 che con q3 |
+| E: peeker's advantage + culling | ping ~60 ms (30 ms/direzione, 5 ms jitter, 1% loss): vantaggio > 0 e minore con cs2 che con q3; con il culling **0 fughe** (il peeker fermo dietro il muro non viene mai mandato) e **comparse in ritardo ≤ 2%** dei tick in cui l'avversario è visibile. Con cs2 si ripete senza culling per confronto |
 
 Risultati dell'ultima esecuzione (Godot 4.7.2, headless, `RISULTATO: PASS`):
 
 ```
 cs2 (64/64 Hz, interp 31.25 ms, unlag 200 ms)
-A  errore predetto vs server: medio 0.0000 px, max 0.0000 px su 1168 misure
-   interpolazione remoti vs server: medio 0.05 px, max 4.5 px
-B  errore medio 0.17 px, max 9.38 px -> errore finale 0.0000 px
+A  errore predetto vs server: medio 0.0000 px, max 0.0000 px su 1155 misure
+   interpolazione remoti vs server: medio 0.08 px, max 8.7 px
+B  errore medio 0.19 px, max 8.08 px -> errore finale 0.0000 px
 C  errore medio 13.9 px, max 36.0 px (deriva)
-D  100 ms/dir (oltre sv_maxunlag): 46/50 a segno (92%), senza lag comp 0%
+D  100 ms/dir (oltre sv_maxunlag): 42/50 a segno (84%), senza lag comp 0%
 D   50 ms/dir: 45/45 a segno (100%), senza lag comp 20%
-E  peeker's advantage medio 122 ms, il peeker colpisce per primo 8/8
+E  culling ON : vantaggio del peeker 126 ms, 8/8 | fughe 0/180 tick | comparse in ritardo 0/368
+E  culling OFF: vantaggio del peeker 126 ms, 8/8 | fughe 180/180 tick
 
 q3 (60/20 Hz, interp 100 ms, unlag 1 s)
 A  errore predetto vs server: medio 0.0000 px, max 0.0000 px su 447 misure
-   interpolazione remoti vs server: medio 0.12 px, max 16.5 px
-D  100 ms/dir: 46/46 a segno (100%), senza lag comp 22%
-E  peeker's advantage medio 204 ms, il peeker colpisce per primo 8/8
+   interpolazione remoti vs server: medio 0.13 px, max 16.0 px
+D  100 ms/dir: 47/47 a segno (100%), senza lag comp 21%
+E  culling ON : vantaggio del peeker 187 ms, 8/8 | fughe 0/180 tick | comparse in ritardo 0/356
 ```
 
 Nello scenario E il peeker vede l'altro circa 40–60 ms *prima* del server (la
 sua predizione è avanti di ½ RTT). Chi tiene l'angolo lo vede circa 60–80 ms
 *dopo* il server con cs2 e circa 130–170 ms dopo con q3: con snapshot a 20 Hz
 e 100 ms di interpolazione l'avversario arriva più tardi sullo schermo.
+
+Controprova del culling: con un culling "ingenuo" (linea di vista centro-centro
+attuale, senza anticipo) il test fallisce, con 125–182 tick di comparse in
+ritardo; il peeker perde anche il vantaggio (fino a −131 ms), perché riceve
+l'avversario solo quando il server lo vede già.
