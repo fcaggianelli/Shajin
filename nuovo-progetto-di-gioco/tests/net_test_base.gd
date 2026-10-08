@@ -45,6 +45,7 @@ func start_match(n_clients: int, spawns: Array = [], lag := LAG_MS, jitter := JI
 	server = Server.new()
 	if not spawns.is_empty():
 		server.spawns = spawns
+		server.ordered_join_spawns = true
 	add_child(server)
 	if server.start(port) != OK:
 		check(false, "server non avviato")

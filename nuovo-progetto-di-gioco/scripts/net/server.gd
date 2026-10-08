@@ -17,10 +17,13 @@ const InputCmd = preload("res://scripts/game/input_cmd.gd")
 const MAX_ORIGIN_ERROR := 0.3
 
 const MAX_PLAYERS := 8
+const RESPAWN_TICKS := 3 * NetConfig.TICK_RATE      # 3 s da morto
+const PROTECTION_TICKS := 2 * NetConfig.TICK_RATE   # 2 s di protezione dopo il respawn
 
 var sim: NetSim
 var bind_ip := "0.0.0.0"
-var spawns: Array = Level.SPAWNS  # i test possono sostituirli
+var spawns: Array = Level.SPAWNS  # spawn all'ingresso: i test li fissano in ordine
+var ordered_join_spawns := false  # true: all'ingresso spawns[0], spawns[1]... (test)
 var tick := 0
 ## peer_id -> {id, state, last_seq, applied_usec, score, deaths, protect_until, respawn_tick}
 var clients := {}
@@ -65,8 +68,11 @@ func stop() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	var s := PlayerState.new()
-	s.pos = spawns[_spawn_index % spawns.size()]
-	_spawn_index += 1
+	if ordered_join_spawns:
+		s.pos = spawns[_spawn_index % spawns.size()]
+		_spawn_index += 1
+	else:
+		s.pos = farthest_spawn(id)
 	clients[id] = {id = id, state = s, last_seq = 0, applied_usec = 0, score = 0, deaths = 0,
 		protect_until = 0, respawn_tick = 0}
 	print("[server] giocatore %d entrato (%d in partita)" % [id, clients.size()])
@@ -84,6 +90,7 @@ func _physics_process(_delta: float) -> void:
 	for pkt in sim.poll():
 		_handle_packet(pkt[0], pkt[1])
 	tick += 1
+	_respawn_dead()
 	if tick % NetConfig.SNAPSHOT_EVERY == 0:
 		_record_history()
 		_send_snapshots()
@@ -219,12 +226,37 @@ func _kill(killer: Dictionary, victim: Dictionary) -> void:
 	victim.state.alive = false
 	victim.state.vel = Vector3.ZERO
 	victim.deaths += 1
+	victim.respawn_tick = tick + RESPAWN_TICKS
 	killer.score += 1
 	kills.append([next_kill_id, killer.id, victim.id])
 	next_kill_id = (next_kill_id % 65535) + 1
 	while kills.size() > 8:
 		kills.pop_front()
 	print("[server] %d ha ucciso %d" % [killer.id, victim.id])
+
+
+func _respawn_dead() -> void:
+	for id in clients:
+		var c: Dictionary = clients[id]
+		if not c.state.alive and tick >= c.respawn_tick:
+			respawn_at(id, farthest_spawn(id))
+			c.protect_until = tick + PROTECTION_TICKS
+
+
+## Lo spawn del livello più lontano dai giocatori vivi (massimizza la distanza
+## dal più vicino). Senza altri giocatori vivi: il primo.
+func farthest_spawn(exclude_id: int) -> Vector3:
+	var best: Vector3 = Level.SPAWNS[0]
+	var best_d := -1.0
+	for sp in Level.SPAWNS:
+		var nearest := INF
+		for id in clients:
+			if id != exclude_id and clients[id].state.alive:
+				nearest = minf(nearest, sp.distance_to(clients[id].state.pos))
+		if nearest > best_d:
+			best_d = nearest
+			best = sp
+	return best
 
 
 ## Riporta in vita `id` in `pos` (usato dal ciclo di respawn e dai test).
