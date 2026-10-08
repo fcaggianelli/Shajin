@@ -1,7 +1,7 @@
 extends Node
-## Server autoritativo. Tick fisso a 60 Hz (_physics_process), snapshot a 20 Hz.
+## Server autoritativo. Tick e frequenza degli snapshot dal preset (NetConfig).
 ## Come in Quake III, i comandi di un client vengono eseguiti appena arrivano
-## (ognuno vale esattamente un tick, Movement.DT): il server non aspetta e non
+## (ognuno vale esattamente un tick, Movement.dt()): il server non aspetta e non
 ## bufferizza, e il risultato è identico a quello predetto dal client.
 
 const Movement = preload("res://scripts/game/movement.gd")
@@ -30,6 +30,11 @@ var hits_with_lag_comp := 0     # colpi che sarebbero andati a segno riavvolgend
 var hits_without_lag_comp := 0  # colpi che sarebbero andati a segno senza riavvolgere
 var knockback := Weapon.KNOCKBACK
 var hit_log: Array = []  # [usec, shooter_id, target_id] per ogni colpo a segno
+
+## Culling anti-wallhack: ogni client riceve solo i giocatori che potrebbe vedere.
+## Senza, un client modificato potrebbe mostrare tutti attraverso i muri.
+var cull_enabled := true
+const CULL_MARGIN := 8.0  # px di tolleranza extra attorno alle scatole
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
@@ -72,7 +77,7 @@ func _on_peer_connected(id: int) -> void:
 	var s := PlayerState.new()
 	s.pos = spawns[_spawn_index % spawns.size()]
 	_spawn_index += 1
-	clients[id] = {id = id, state = s, last_seq = 0, applied_usec = 0, hits = 0, deaths = 0}
+	clients[id] = {id = id, state = s, last_seq = 0, applied_usec = 0, hits = 0, deaths = 0, delay_ticks = 0.0}
 	print("[server] client %d connesso" % id)
 
 
@@ -106,6 +111,11 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 			_on_fire(c, cmd)
 		c.last_seq = cmd.seq
 		c.applied_usec = Time.get_ticks_usec()
+		# Quanto è "indietro" ciò che vede questo client: ~RTT + interpolazione.
+		# È la stessa quantità che la lag compensation riavvolge; qui serve al culling.
+		var max_delay := NetConfig.tick_rate * HISTORY_SECONDS
+		var delay := clampf(tick - cmd.view_tick, 0.0, max_delay)
+		c.delay_ticks = delay if c.delay_ticks == 0.0 else lerpf(c.delay_ticks, delay, 0.1)
 
 
 func _on_fire(shooter: Dictionary, cmd) -> void:
@@ -153,8 +163,37 @@ func _send_snapshots() -> void:
 	var now := Time.get_ticks_usec()
 	for id in clients:
 		var c: Dictionary = clients[id]
+		var visible := players
+		if cull_enabled:
+			visible = players.filter(func(o): return o.id == id or _potentially_visible(c, o))
 		var hold_ms := int((now - c.applied_usec) / 1000) if c.last_seq > 0 else 0
-		sim.send(id, Protocol.encode_snapshot(config, tick, c.last_seq, hold_ms, players))
+		sim.send(id, Protocol.encode_snapshot(config, tick, c.last_seq, hold_ms, visible))
+
+
+## Culling conservativo: `other` viene mandato a `viewer` se esiste linea di vista
+## tra un punto qualsiasi della "scatola" in cui viewer può trovarsi sul proprio
+## schermo e un punto della scatola in cui viewer può vedere `other`.
+##   - viewer è predetto in avanti: scatola tra pos e pos + vel * ritardo
+##   - other è mostrato nel passato (interpolazione): scatola tra pos e pos - vel * ritardo
+## Le scatole includono il corpo del giocatore + CULL_MARGIN e si testano angoli e
+## centro (5 x 5 raggi). Così l'avversario arriva PRIMA di diventare visibile
+## (nessuna comparsa in ritardo), ma resta nascosto finché è davvero dietro un muro.
+## Il ritardo è misurato dal server (tick - view_tick), limitato a 1 s.
+func _potentially_visible(viewer: Dictionary, other: Dictionary) -> bool:
+	var dt: float = viewer.delay_ticks / NetConfig.tick_rate
+	var a := _reach_points(viewer.state.pos, viewer.state.pos + viewer.state.vel * dt)
+	var b := _reach_points(other.state.pos, other.state.pos - other.state.vel * dt)
+	for p in a:
+		for q in b:
+			if Map.line_of_sight(p, q):
+				return true
+	return false
+
+
+static func _reach_points(p0: Vector2, p1: Vector2) -> Array:
+	var half := Movement.PLAYER_SIZE * 0.5 + CULL_MARGIN
+	var box := Rect2(p0, Vector2.ZERO).expand(p1).grow(half)
+	return [box.get_center(), box.position, Vector2(box.end.x, box.position.y), box.end, Vector2(box.position.x, box.end.y)]
 
 
 ## Posizione di `id` al tick (frazionario) `t`, ricostruita dalla cronologia
