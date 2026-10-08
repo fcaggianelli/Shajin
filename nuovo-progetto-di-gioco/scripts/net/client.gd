@@ -189,7 +189,8 @@ func _fill_shot(cmd: InputCmd) -> void:
 			if remote_states[id].alive:
 				targets[id] = remote_states[id].pos
 		var hit := Weapon.trace(o, d, targets)
-		_effects.shot(o + Vector3(0, -0.15, 0), o + d * hit.dist)
+		var right := Vector3(cos(cmd.yaw), 0, -sin(cmd.yaw))
+		_effects.shot(o + right * 0.2 + Vector3(0, -0.2, 0) + d * 0.3, o + d * hit.dist)
 
 
 func _sample_input() -> Dictionary:

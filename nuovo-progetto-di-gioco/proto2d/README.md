@@ -1,5 +1,7 @@
 # Prototipo netcode stile Quake III (Godot 4, GDScript)
 
+> Prototipo 2D precedente, conservato qui. Si avvia passando la sua scena: `godot --path . res://proto2d/scenes/main.tscn`. Il gioco principale del progetto ora è il deathmatch 3D (vedi il README nella radice del repo).
+
 Il prototipo 2D è in `nuovo-progetto-di-gioco/proto2d/` (Godot 4.7). Server autoritativo
 ENet, client-side prediction, server reconciliation, interpolazione delle entità
 remote, simulatore di rete, overlay di debug, hitscan con lag compensation,
@@ -13,20 +15,20 @@ Gli argomenti del gioco vanno dopo `--`; `--headless` è il flag di Godot.
 
 ```sh
 # Client con menu: campi IP e porta, oppure "Ospita partita" (server + gioca)
-godot --path .
+godot --path . res://proto2d/scenes/main.tscn
 
 # Server dedicato (headless), in ascolto su 0.0.0.0 (tutte le interfacce IPv4)
-godot --headless --path . -- --server --port=27960
+godot --headless --path . res://proto2d/scenes/main.tscn -- --server --port=27960
 
 # Client (finestra); qui con 50 ms per direzione, 10 ms di jitter, 5% di perdita
-godot --path . -- --client --host=127.0.0.1 --port=27960 --lag=50 --jitter=10 --loss=0.05
+godot --path . res://proto2d/scenes/main.tscn -- --client --host=127.0.0.1 --port=27960 --lag=50 --jitter=10 --loss=0.05
 
 # Server con i valori di Quake III invece di CS2 (default)
-godot --headless --path . -- --server --preset=q3
+godot --headless --path . res://proto2d/scenes/main.tscn -- --server --preset=q3
 
 # Server senza lag compensation / senza culling anti-wallhack (per confronto)
-godot --headless --path . -- --server --no-lagcomp
-godot --headless --path . -- --server --no-cull
+godot --headless --path . res://proto2d/scenes/main.tscn -- --server --no-lagcomp
+godot --headless --path . res://proto2d/scenes/main.tscn -- --server --no-cull
 
 # Test (exit code 0 = PASS, 1 = FAIL)
 godot --headless --path . res://proto2d/tests/test_netcode.tscn

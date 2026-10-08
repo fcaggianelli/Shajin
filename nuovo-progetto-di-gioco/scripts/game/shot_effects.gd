@@ -24,20 +24,24 @@ func _ready() -> void:
 	add_child(_audio)
 
 
+## Traccia come barra sottile da `from` (l'arma, in basso a destra) a `to`.
 func shot(from: Vector3, to: Vector3) -> void:
-	var mesh := ImmediateMesh.new()
+	var length := from.distance_to(to)
+	if length < 0.01:
+		return
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.albedo_color = Color(1, 0.9, 0.4)
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES, mat)
-	mesh.surface_add_vertex(from)
-	mesh.surface_add_vertex(to)
-	mesh.surface_end()
+	mat.albedo_color = Color(1, 0.45, 0.05)
+	var box := BoxMesh.new()
+	box.size = Vector3(0.04, 0.04, length)
 	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
+	mi.mesh = box
+	mi.material_override = mat
 	mi.top_level = true
 	add_child(mi)
+	mi.global_position = (from + to) / 2
+	mi.look_at_from_position(mi.global_position, to, Vector3.UP if absf((to - from).normalized().y) < 0.99 else Vector3.RIGHT)
 	_tracers.append([mi, TRACER_TIME, mat])
 	_audio.play()
 
