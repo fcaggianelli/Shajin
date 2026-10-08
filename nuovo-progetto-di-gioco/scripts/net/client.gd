@@ -92,6 +92,9 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 		_effects = preload("res://scripts/game/shot_effects.gd").new()
 		add_child(_effects)
+		var hud := preload("res://scripts/ui/hud.gd").new()
+		hud.client = self
+		add_child(hud)
 		var overlay := DebugOverlay.new()
 		overlay.client = self
 		add_child(overlay)
@@ -258,8 +261,15 @@ func _on_snapshot(snap: Dictionary) -> void:
 				_send_usec.erase(s)
 		last_ack = ack
 
-	if not prediction_enabled:
+	var respawned := not state.alive and server_state.alive
+	if not prediction_enabled or not server_state.alive or respawned:
+		# Morte e respawn li decide il server: si adotta il suo stato (teletrasporto).
 		state = server_state.copy()
+		for cmd in pending:
+			if prediction_enabled:
+				Movement.simulate_move(state, cmd, Movement.DT)
+		if respawned:
+			_prev_pos = state.pos
 	elif reconciliation_enabled:
 		# Riconciliazione: riparti dallo stato autoritativo e rigioca gli input pendenti.
 		var before := state.pos
