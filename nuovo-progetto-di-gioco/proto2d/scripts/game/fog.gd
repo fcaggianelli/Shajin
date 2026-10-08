@@ -3,8 +3,8 @@ extends Node2D
 ## locale. Disegnata sopra i giocatori, così chi è in ombra resta coperto.
 ## (La visibilità logica dei remoti è Map.line_of_sight, centro-centro.)
 
-const Map = preload("res://scripts/game/map.gd")
-const Movement = preload("res://scripts/game/movement.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
 
 const FAR := 3000.0
 const SHADOW := Color(0.04, 0.04, 0.06, 0.93)

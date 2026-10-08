@@ -2,7 +2,7 @@ extends CanvasLayer
 ## Overlay di debug del client. F3 mostra/nasconde, F4 prediction,
 ## F5 reconciliation, F6 ridondanza degli input.
 
-const NetConfig = preload("res://scripts/net/net_config.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
 
 var client  # scripts/net/client.gd
 var _label := Label.new()

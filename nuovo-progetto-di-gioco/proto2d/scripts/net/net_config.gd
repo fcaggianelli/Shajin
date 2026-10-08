@@ -10,7 +10,7 @@ extends RefCounted
 ## q3: valori di default di Quake III (snapshot 20 Hz, sv_fps 20), con la nostra
 ##   simulazione a 60 Hz e 100 ms di interpolazione (2 snapshot); unlag fino a 1 s.
 
-const Movement = preload("res://scripts/game/movement.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
 
 const PRESETS := {
 	"cs2": {tick_rate = 64, snapshot_rate = 64, interp_ms = 31.25, max_unlag_ms = 200.0},

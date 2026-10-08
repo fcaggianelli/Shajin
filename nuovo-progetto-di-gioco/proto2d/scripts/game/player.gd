@@ -1,7 +1,7 @@
 extends Node2D
 ## Rappresentazione visiva di un giocatore: un quadrato colorato.
 
-const Movement = preload("res://scripts/game/movement.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
 
 var color := Color.WHITE
 var flash := 0.0  # >0 subito dopo essere stato colpito

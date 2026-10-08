@@ -4,14 +4,14 @@ extends Node
 ## (ognuno vale esattamente un tick, Movement.dt()): il server non aspetta e non
 ## bufferizza, e il risultato è identico a quello predetto dal client.
 
-const Movement = preload("res://scripts/game/movement.gd")
-const PlayerState = preload("res://scripts/game/player_state.gd")
-const Protocol = preload("res://scripts/net/protocol.gd")
-const NetSim = preload("res://scripts/net/net_sim.gd")
-const Weapon = preload("res://scripts/game/weapon.gd")
-const Map = preload("res://scripts/game/map.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
+const PlayerState = preload("res://proto2d/scripts/game/player_state.gd")
+const Protocol = preload("res://proto2d/scripts/net/protocol.gd")
+const NetSim = preload("res://proto2d/scripts/net/net_sim.gd")
+const Weapon = preload("res://proto2d/scripts/game/weapon.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
 
-const NetConfig = preload("res://scripts/net/net_config.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
 const HISTORY_SECONDS := 1.0
 
 var sim: NetSim

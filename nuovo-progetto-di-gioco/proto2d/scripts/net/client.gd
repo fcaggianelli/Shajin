@@ -1,17 +1,17 @@
 extends Node2D
 ## Client: client-side prediction + server reconciliation.
 
-const Movement = preload("res://scripts/game/movement.gd")
-const PlayerState = preload("res://scripts/game/player_state.gd")
-const InputCmd = preload("res://scripts/game/input_cmd.gd")
-const Player = preload("res://scripts/game/player.gd")
-const Protocol = preload("res://scripts/net/protocol.gd")
-const NetSim = preload("res://scripts/net/net_sim.gd")
-const NetConfig = preload("res://scripts/net/net_config.gd")
-const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
-const Weapon = preload("res://scripts/game/weapon.gd")
-const Map = preload("res://scripts/game/map.gd")
-const Fog = preload("res://scripts/game/fog.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
+const PlayerState = preload("res://proto2d/scripts/game/player_state.gd")
+const InputCmd = preload("res://proto2d/scripts/game/input_cmd.gd")
+const Player = preload("res://proto2d/scripts/game/player.gd")
+const Protocol = preload("res://proto2d/scripts/net/protocol.gd")
+const NetSim = preload("res://proto2d/scripts/net/net_sim.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
+const DebugOverlay = preload("res://proto2d/scripts/net/debug_overlay.gd")
+const Weapon = preload("res://proto2d/scripts/game/weapon.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
+const Fog = preload("res://proto2d/scripts/game/fog.gd")
 
 const ARENA_OFFSET := Vector2(20, 20)
 const CONNECT_TIMEOUT_MS := 5000

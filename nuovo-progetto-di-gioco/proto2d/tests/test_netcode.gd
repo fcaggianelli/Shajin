@@ -1,15 +1,15 @@
 extends Node
 ## Test headless del netcode:
-##   godot --headless --path . res://tests/test_netcode.tscn
+##   godot --headless --path . res://proto2d/tests/test_netcode.tscn
 ## 1 server + 2 client nello stesso processo (veri socket ENet su localhost),
 ## input scriptati, 100 ms di latenza per direzione (+jitter) e 5% di perdita
 ## per direzione sui client. Exit code 0 = PASS, 1 = FAIL.
 
-const Server = preload("res://scripts/net/server.gd")
-const Client = preload("res://scripts/net/client.gd")
-const InputCmd = preload("res://scripts/game/input_cmd.gd")
-const NetConfig = preload("res://scripts/net/net_config.gd")
-const Map = preload("res://scripts/game/map.gd")
+const Server = preload("res://proto2d/scripts/net/server.gd")
+const Client = preload("res://proto2d/scripts/net/client.gd")
+const InputCmd = preload("res://proto2d/scripts/game/input_cmd.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
 
 const LAG_MS := 100.0
 const JITTER_MS := 10.0

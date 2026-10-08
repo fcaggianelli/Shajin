@@ -1,6 +1,6 @@
 # Prototipo netcode stile Quake III (Godot 4, GDScript)
 
-Il progetto Godot è in `nuovo-progetto-di-gioco/` (Godot 4.7). Server autoritativo
+Il prototipo 2D è in `nuovo-progetto-di-gioco/proto2d/` (Godot 4.7). Server autoritativo
 ENet, client-side prediction, server reconciliation, interpolazione delle entità
 remote, simulatore di rete, overlay di debug, hitscan con lag compensation,
 preset di rete competitivi (CS2) e muri con fog of war per mostrare il
@@ -29,7 +29,7 @@ godot --headless --path . -- --server --no-lagcomp
 godot --headless --path . -- --server --no-cull
 
 # Test (exit code 0 = PASS, 1 = FAIL)
-godot --headless --path . res://tests/test_netcode.tscn
+godot --headless --path . res://proto2d/tests/test_netcode.tscn
 ```
 
 Senza argomenti: in headless parte il server, con finestra il menu di connessione.
@@ -80,7 +80,7 @@ compensato (come in CS2): il test lo mostra a 100 ms per direzione.
 
 ## Muri, fog of war e peeker's advantage
 
-- **Muri** (`scripts/game/map.gd`): fanno parte della simulazione condivisa
+- **Muri** (`proto2d/scripts/game/map.gd`): fanno parte della simulazione condivisa
   (collisione per asse, deterministica, si scivola lungo il muro) e fermano
   l'hitscan. Il muro in basso al centro forma un angolo: da `(120,520)` e
   `(520,520)` i due giocatori non si vedono finché uno non esce verso l'alto.
@@ -117,21 +117,21 @@ compensato (come in CS2): il test lo mostra a 100 ms per direzione.
 
 | Percorso | Contenuto |
 |---|---|
-| `scripts/game/movement.gd` | `simulate_move(state, cmd, delta)`: movimento deterministico condiviso (attrito e accelerazione alla Q3, cooldown dell'arma) |
-| `scripts/game/player_state.gd`, `input_cmd.gd` | stato simulato e comando utente (usercmd) |
-| `scripts/game/weapon.gd` | raggio hitscan contro i quadrati, fermato dai muri |
-| `scripts/game/map.gd` | muri, spawn, linea di vista, collisioni |
-| `scripts/game/fog.gd` | ombre della fog of war |
-| `scripts/game/player.gd` | il quadrato disegnato |
-| `scripts/net/server.gd` | server autoritativo, snapshot, cronologia, lag compensation |
-| `scripts/net/client.gd` | prediction, reconciliation, interpolazione, traccianti |
-| `scripts/net/net_sim.gd` | simulatore di latenza, jitter e perdita |
-| `scripts/net/protocol.gd` | formato dei pacchetti in byte |
-| `scripts/net/net_config.gd` | preset di rete (cs2, q3) |
-| `scripts/net/debug_overlay.gd` | overlay F3 |
-| `scripts/ui/connect_menu.gd` | menu iniziale: IP, porta, Connetti / Ospita |
-| `scenes/main.tscn`, `scripts/main.gd` | entry point, parsing della riga di comando |
-| `tests/test_netcode.tscn` | test headless |
+| `proto2d/scripts/game/movement.gd` | `simulate_move(state, cmd, delta)`: movimento deterministico condiviso (attrito e accelerazione alla Q3, cooldown dell'arma) |
+| `proto2d/scripts/game/player_state.gd`, `input_cmd.gd` | stato simulato e comando utente (usercmd) |
+| `proto2d/scripts/game/weapon.gd` | raggio hitscan contro i quadrati, fermato dai muri |
+| `proto2d/scripts/game/map.gd` | muri, spawn, linea di vista, collisioni |
+| `proto2d/scripts/game/fog.gd` | ombre della fog of war |
+| `proto2d/scripts/game/player.gd` | il quadrato disegnato |
+| `proto2d/scripts/net/server.gd` | server autoritativo, snapshot, cronologia, lag compensation |
+| `proto2d/scripts/net/client.gd` | prediction, reconciliation, interpolazione, traccianti |
+| `proto2d/scripts/net/net_sim.gd` | simulatore di latenza, jitter e perdita |
+| `proto2d/scripts/net/protocol.gd` | formato dei pacchetti in byte |
+| `proto2d/scripts/net/net_config.gd` | preset di rete (cs2, q3) |
+| `proto2d/scripts/net/debug_overlay.gd` | overlay F3 |
+| `proto2d/scripts/ui/connect_menu.gd` | menu iniziale: IP, porta, Connetti / Ospita |
+| `proto2d/scenes/main.tscn`, `proto2d/scripts/main.gd` | entry point, parsing della riga di comando |
+| `proto2d/tests/test_netcode.tscn` | test headless |
 
 ## Modello di rete
 
@@ -186,7 +186,7 @@ compensato (come in CS2): il test lo mostra a 100 ms per direzione.
 
 ## Test
 
-`tests/test_netcode.tscn` avvia server e client nello stesso processo con veri
+`proto2d/tests/test_netcode.tscn` avvia server e client nello stesso processo con veri
 socket ENet su localhost e input scriptati, per **entrambi i preset**. Gli
 scenari A–D usano **100 ms di latenza per direzione (RTT ≈ 200 ms), 10 ms di
 jitter e 5% di perdita per direzione**. L'errore di predizione viene misurato a

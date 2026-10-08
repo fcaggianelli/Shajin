@@ -8,10 +8,10 @@ extends Node
 ##         --preset=cs2|q3 sceglie tick/snapshot/interpolazione (default cs2),
 ##         --no-cull manda a tutti la posizione di tutti (niente anti-wallhack).
 
-const Server = preload("res://scripts/net/server.gd")
-const Client = preload("res://scripts/net/client.gd")
-const ConnectMenu = preload("res://scripts/ui/connect_menu.gd")
-const NetConfig = preload("res://scripts/net/net_config.gd")
+const Server = preload("res://proto2d/scripts/net/server.gd")
+const Client = preload("res://proto2d/scripts/net/client.gd")
+const ConnectMenu = preload("res://proto2d/scripts/ui/connect_menu.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
 
 var args := {}
 var _menu: ConnectMenu

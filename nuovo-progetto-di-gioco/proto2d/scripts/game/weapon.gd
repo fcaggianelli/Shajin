@@ -1,8 +1,8 @@
 extends RefCounted
 ## Arma hitscan condivisa: raggio istantaneo contro i quadrati dei giocatori.
 
-const Movement = preload("res://scripts/game/movement.gd")
-const Map = preload("res://scripts/game/map.gd")
+const Movement = preload("res://proto2d/scripts/game/movement.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
 
 const RANGE := 1200.0
 const KNOCKBACK := 250.0  # spinta applicata dal server al bersaglio colpito

@@ -6,7 +6,7 @@ signal join_requested(host: String, port: int)
 signal host_requested(port: int, preset: String)
 
 const CONFIG_PATH := "user://connect.cfg"
-const NetConfig = preload("res://scripts/net/net_config.gd")
+const NetConfig = preload("res://proto2d/scripts/net/net_config.gd")
 
 var _host := LineEdit.new()
 var _port := LineEdit.new()

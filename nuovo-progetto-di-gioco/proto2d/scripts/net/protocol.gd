@@ -15,8 +15,8 @@ extends RefCounted
 ##   hold_ms = da quanto il server ha applicato ack_seq (per un ping corretto).
 ##   tick_rate/snapshot_every/interp_ms: il preset del server (vedi NetConfig).
 
-const InputCmd = preload("res://scripts/game/input_cmd.gd")
-const PlayerState = preload("res://scripts/game/player_state.gd")
+const InputCmd = preload("res://proto2d/scripts/game/input_cmd.gd")
+const PlayerState = preload("res://proto2d/scripts/game/player_state.gd")
 
 const TYPE_INPUT := 1
 const TYPE_SNAPSHOT := 2

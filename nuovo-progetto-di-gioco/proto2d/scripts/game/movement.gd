@@ -3,9 +3,9 @@ extends RefCounted
 ## client (prediction + replay). Deve essere deterministico: dipende solo da
 ## stato, input e delta, nessun accesso a tempo, rete o random.
 
-const PlayerState = preload("res://scripts/game/player_state.gd")
-const InputCmd = preload("res://scripts/game/input_cmd.gd")
-const Map = preload("res://scripts/game/map.gd")
+const PlayerState = preload("res://proto2d/scripts/game/player_state.gd")
+const InputCmd = preload("res://proto2d/scripts/game/input_cmd.gd")
+const Map = preload("res://proto2d/scripts/game/map.gd")
 
 ## Frequenza della simulazione: la imposta NetConfig (64 Hz per il preset cs2).
 ## Client e server devono usare lo stesso valore, altrimenti la predizione diverge.
