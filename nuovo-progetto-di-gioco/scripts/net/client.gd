@@ -8,6 +8,8 @@ const Player = preload("res://scripts/game/player.gd")
 const Protocol = preload("res://scripts/net/protocol.gd")
 const NetSim = preload("res://scripts/net/net_sim.gd")
 const NetConfig = preload("res://scripts/net/net_config.gd")
+const Server = preload("res://scripts/net/server.gd")
+const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
 
 const CONNECT_TIMEOUT_MS := 5000
 const MOUSE_SENSITIVITY := 0.0025
@@ -40,6 +42,7 @@ var _send_usec := {}              # seq -> istante di invio (ping)
 var last_snap_tick := -1
 var snapshots: Array = []         # ultimi snapshot, ordinati per tick
 var server_tick_est := 0.0        # stima del tick server corrente
+var render_tick := 0.0            # istante (tick server) a cui mostriamo i remoti
 var players_info := {}            # id -> {score, deaths, protected, respawn_ticks, alive}
 
 # --- Statistiche ---
@@ -76,6 +79,9 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 		add_child(_camera)
 		_camera.current = true
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		var overlay := DebugOverlay.new()
+		overlay.client = self
+		add_child(overlay)
 	return OK
 
 
@@ -119,6 +125,7 @@ func _physics_process(_delta: float) -> void:
 		return  # aspettiamo il primo snapshot per conoscere lo spawn
 
 	server_tick_est += 1.0
+	render_tick = server_tick_est - NetConfig.ms_to_ticks(NetConfig.INTERP_MS)
 	_update_remotes()
 
 	# 1. campiona l'input di questo tick
@@ -221,18 +228,19 @@ func _record_error(e: float) -> void:
 	errors.append(e)
 
 
-## Fase 1: i remoti sono mostrati all'ultimo snapshot ricevuto.
 var remote_states := {}  # id -> PlayerState come visualizzato
 
 
+## Gli altri giocatori sono mostrati a render_tick (~100 ms nel passato),
+## interpolati tra i due snapshot che lo racchiudono.
 func _update_remotes() -> void:
 	remote_states.clear()
 	if snapshots.is_empty():
 		return
-	var latest: Dictionary = snapshots[-1]
-	for id in latest.players:
+	var pair := Server.bracket(snapshots, render_tick)
+	for id in pair[1].players:
 		if id != my_id:
-			remote_states[id] = latest.players[id].state
+			remote_states[id] = Server.interpolate(pair[0], pair[1], id, render_tick)
 
 
 func _process(_delta: float) -> void:

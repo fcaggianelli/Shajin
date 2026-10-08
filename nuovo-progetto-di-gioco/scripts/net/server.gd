@@ -18,6 +18,9 @@ var spawns: Array = Level.SPAWNS  # i test possono sostituirli
 var tick := 0
 ## peer_id -> {id, state, last_seq, applied_usec, score, deaths, protect_until, respawn_tick}
 var clients := {}
+## Cronologia agli istanti degli snapshot (~1 s): [{tick, players: {id: PlayerState}}].
+## È esattamente ciò che i client interpolano: serve al rewind della fase 3.
+var history: Array = []
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
@@ -67,6 +70,7 @@ func _physics_process(_delta: float) -> void:
 		_handle_packet(pkt[0], pkt[1])
 	tick += 1
 	if tick % NetConfig.SNAPSHOT_EVERY == 0:
+		_record_history()
 		_send_snapshots()
 
 
@@ -81,6 +85,57 @@ func _handle_packet(from: int, data: PackedByteArray) -> void:
 		Movement.simulate_move(c.state, cmd, Movement.DT)
 		c.last_seq = cmd.seq
 		c.applied_usec = Time.get_ticks_usec()
+
+
+func _record_history() -> void:
+	var players := {}
+	for id in clients:
+		players[id] = clients[id].state.copy()
+	history.append({tick = tick, players = players})
+	var max_entries := int(NetConfig.HISTORY_SECONDS * NetConfig.TICK_RATE / NetConfig.SNAPSHOT_EVERY) + 1
+	while history.size() > max_entries:
+		history.pop_front()
+
+
+## Stato di `id` al tick frazionario `t`, interpolato dalla cronologia esattamente
+## come lo interpola il client. null se `id` non c'è.
+func state_at(id: int, t: float) -> Variant:
+	if history.is_empty():
+		return null
+	var pair := bracket(history, t)
+	return interpolate(pair[0], pair[1], id, t)
+
+
+## I due elementi (con .tick) che racchiudono t; agli estremi lo stesso elemento due volte.
+static func bracket(list: Array, t: float) -> Array:
+	var a: Dictionary = list[0]
+	var b: Dictionary = list[0]
+	for e in list:
+		b = e
+		if e.tick >= t:
+			break
+		a = e
+	return [a, b]
+
+
+## Interpolazione condivisa da client (snapshot) e server (cronologia).
+static func interpolate(a: Dictionary, b: Dictionary, id: int, t: float) -> Variant:
+	if not b.players.has(id):
+		return null
+	var sb: PlayerState = b.players[id] if b.players[id] is PlayerState else b.players[id].state
+	var sa: PlayerState = sb
+	if a.players.has(id):
+		sa = a.players[id] if a.players[id] is PlayerState else a.players[id].state
+	if not sa.alive or not sb.alive:
+		return sb.copy()  # morte/respawn: niente scivolamento attraverso la mappa
+	var f := 0.0
+	if b.tick > a.tick:
+		f = clampf((t - a.tick) / float(b.tick - a.tick), 0.0, 1.0)
+	var s: PlayerState = sb.copy()
+	s.pos = sa.pos.lerp(sb.pos, f)
+	s.yaw = lerp_angle(sa.yaw, sb.yaw, f)
+	s.pitch = lerpf(sa.pitch, sb.pitch, f)
+	return s
 
 
 func _snapshot_players() -> Array:
