@@ -10,12 +10,15 @@ const NetSim = preload("res://scripts/net/net_sim.gd")
 const NetConfig = preload("res://scripts/net/net_config.gd")
 const Server = preload("res://scripts/net/server.gd")
 const DebugOverlay = preload("res://scripts/net/debug_overlay.gd")
+const Weapon = preload("res://scripts/game/weapon.gd")
 
 const CONNECT_TIMEOUT_MS := 5000
 const MOUSE_SENSITIVITY := 0.0025
 
 ## Emesso quando la connessione fallisce o cade; was_connected distingue i casi.
 signal disconnected(was_connected: bool)
+## Uccisione confermata dal server (arriva una sola volta per kill_id).
+signal kill_confirmed(killer: int, victim: int)
 
 var sim: NetSim
 var my_id := 0
@@ -23,6 +26,9 @@ var my_id := 0
 # --- Toggle di debug ---
 var prediction_enabled := true
 var reconciliation_enabled := true
+## Solo per i test: se false il client manda FIRE anche durante il cooldown
+## (come un client modificato) per verificare che il server lo rifiuti.
+var honor_cooldown := true
 
 ## Sorgente input sostituibile (test): func(client, seq) -> {buttons, yaw, pitch}
 var input_provider := Callable()
@@ -44,6 +50,10 @@ var snapshots: Array = []         # ultimi snapshot, ordinati per tick
 var server_tick_est := 0.0        # stima del tick server corrente
 var render_tick := 0.0            # istante (tick server) a cui mostriamo i remoti
 var players_info := {}            # id -> {score, deaths, protected, respawn_ticks, alive}
+var kill_feed: Array = []         # [killer, victim] confermati dal server, più recenti in fondo
+var shots_fired := 0              # spari predetti (traccia mostrata subito)
+var kills_confirmed := 0          # uccisioni ricevute dal server (di chiunque)
+var _last_kill_id := -1
 
 # --- Statistiche ---
 var ping_ms := 0.0
@@ -62,6 +72,7 @@ var _camera: Camera3D
 var _peer: ENetMultiplayerPeer
 var _players := {}                # id -> Player (remoti)
 var _connect_start_ms := 0
+var _effects: Node3D
 
 
 func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
@@ -79,6 +90,8 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 		add_child(_camera)
 		_camera.current = true
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		_effects = preload("res://scripts/game/shot_effects.gd").new()
+		add_child(_effects)
 		var overlay := DebugOverlay.new()
 		overlay.client = self
 		add_child(overlay)
@@ -139,14 +152,41 @@ func _physics_process(_delta: float) -> void:
 
 	# 2. prediction: applicalo subito, senza aspettare il server
 	_prev_pos = state.pos
+	var wants_fire := cmd.buttons & InputCmd.FIRE != 0
+	var fired := false
 	if prediction_enabled:
-		Movement.simulate_move(state, cmd, Movement.DT)
+		fired = Movement.simulate_move(state, cmd, Movement.DT)
 		predicted[seq] = state.pos
+	else:
+		fired = wants_fire and state.alive
+	if fired or (wants_fire and not honor_cooldown):
+		_fill_shot(cmd)
+	elif wants_fire:
+		cmd.buttons &= ~InputCmd.FIRE  # predetto in cooldown: il server farebbe lo stesso
 
 	# 3. buffer + invio (con ridondanza degli input non confermati)
 	pending.append(cmd)
 	_send_usec[seq] = Time.get_ticks_usec()
 	sim.send(1, Protocol.encode_input(pending))
+
+
+## Lo sparo: raggio dal centro della camera, come lo vede il giocatore ora, e il
+## suo tempo (stima del tick server). L'effetto (traccia, suono) è immediato;
+## l'uccisione arriva solo dal server.
+func _fill_shot(cmd: InputCmd) -> void:
+	cmd.shot_time = Protocol.f32(server_tick_est)
+	var o := Movement.eye(state)
+	var d := Movement.aim_dir(cmd.yaw, cmd.pitch)
+	cmd.shot_origin = Vector3(Protocol.f32(o.x), Protocol.f32(o.y), Protocol.f32(o.z))
+	cmd.shot_dir = Vector3(Protocol.f32(d.x), Protocol.f32(d.y), Protocol.f32(d.z))
+	shots_fired += 1
+	if local_view:
+		var targets := {}
+		for id in remote_states:
+			if remote_states[id].alive:
+				targets[id] = remote_states[id].pos
+		var hit := Weapon.trace(o, d, targets)
+		_effects.shot(o + Vector3(0, -0.15, 0), o + d * hit.dist)
 
 
 func _sample_input() -> Dictionary:
@@ -158,6 +198,8 @@ func _sample_input() -> Dictionary:
 	if Input.is_physical_key_pressed(KEY_A): b |= InputCmd.LEFT
 	if Input.is_physical_key_pressed(KEY_D): b |= InputCmd.RIGHT
 	if Input.is_physical_key_pressed(KEY_SPACE): b |= InputCmd.JUMP
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		b |= InputCmd.FIRE
 	return {buttons = b, yaw = view_yaw, pitch = view_pitch}
 
 
@@ -174,6 +216,14 @@ func _on_snapshot(snap: Dictionary) -> void:
 		server_tick_est = snap.tick
 	else:
 		server_tick_est += drift * 0.1
+	for k in snap.kills:
+		if _last_kill_id < 0 or _kill_newer(k[0], _last_kill_id):
+			_last_kill_id = k[0]
+			kill_feed.append([k[1], k[2]])
+			kills_confirmed += 1
+			while kill_feed.size() > 5:
+				kill_feed.pop_front()
+			kill_confirmed.emit(k[1], k[2])
 	players_info.clear()
 	for id in snap.players:
 		var p: Dictionary = snap.players[id]
@@ -218,6 +268,11 @@ func _on_snapshot(snap: Dictionary) -> void:
 			Movement.simulate_move(state, cmd, Movement.DT)
 			predicted[cmd.seq] = state.pos
 		correction_max = maxf(correction_max, before.distance_to(state.pos))
+
+
+## kill_id cresce e riparte da 1 dopo 65535.
+static func _kill_newer(a: int, b: int) -> bool:
+	return (a - b + 65536) % 65536 < 32768 and a != b
 
 
 func _record_error(e: float) -> void:
