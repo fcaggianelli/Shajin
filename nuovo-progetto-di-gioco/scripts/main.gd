@@ -21,6 +21,9 @@ func _ready() -> void:
 		if a.begins_with("--"):
 			var kv: PackedStringArray = a.substr(2).split("=", true, 1)
 			args[kv[0]] = kv[1] if kv.size() > 1 else ""
+	# Diagnostica: utile se un eseguibile esportato non parte come previsto
+	# (avvialo con il .console.exe per vedere questa riga).
+	print("[main] scena %s | argomenti %s" % [scene_file_path, OS.get_cmdline_args() + OS.get_cmdline_user_args()])
 	add_child(Level.new())  # la geometria statica serve anche al server (query fisiche)
 	var port := int(args.get("port", "27960"))
 	var headless := DisplayServer.get_name() == "headless" or args.has("headless")
