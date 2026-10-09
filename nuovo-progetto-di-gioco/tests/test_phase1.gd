@@ -6,8 +6,8 @@ extends "res://tests/net_test_base.gd"
 ## Misura l'errore tra la posizione predetta dopo il comando `ack` e quella del
 ## server per lo stesso comando, a ogni snapshot che conferma nuovi input.
 
-const INPUT_TICKS := 900        # 15 s di input
-const SETTLE_TICKS := 120       # 2 s fermi per far convergere tutto
+const INPUT_TICKS := 15 * S     # 15 s di input
+const SETTLE_TICKS := 2 * S     # 2 s fermi per far convergere tutto
 ## Soglia: 1 cm di errore medio. Con simulazione deterministica e stato in float32
 ## l'atteso è 0; 1 cm lascia margine a eventuali divergenze rare (perdita oltre la
 ## ridondanza) senza nascondere un errore sistematico (un tick di movimento a
@@ -20,15 +20,15 @@ func _script(index: int) -> Callable:
 	return func(_c, seq: int) -> Dictionary:
 		if seq > INPUT_TICKS:
 			return {buttons = 0, yaw = 0.0, pitch = 0.0}
-		var t := float(seq)
+		var t := float(seq) * 60.0 / S
 		if index == 0:
 			# corre in avanti girando lentamente, strafe alternato, salto ogni 1.5 s
 			var b := InputCmd.FORWARD
-			b |= InputCmd.LEFT if (seq / 120) % 2 == 0 else InputCmd.RIGHT
-			if seq % 90 == 0: b |= InputCmd.JUMP
+			b |= InputCmd.LEFT if (seq / (2 * S)) % 2 == 0 else InputCmd.RIGHT
+			if seq % (S * 3 / 2) == 0: b |= InputCmd.JUMP
 			return {buttons = b, yaw = t * 0.012, pitch = sin(t * 0.02) * 0.5}
 		# direzioni pseudo-casuali ogni 20 tick, yaw a scatti, salti
-		var h := hash(seq / 20 * 7919)
+		var h := hash(seq / (S / 3) * 7919)
 		return {buttons = h & 31, yaw = (h % 628) / 100.0, pitch = 0.0}
 
 
@@ -47,7 +47,7 @@ func run() -> void:
 		for c in clients:
 			stats.disp = maxf(stats.disp, c.state.pos.distance_to(start[c.my_id]))
 			stats.height = maxf(stats.height, c.state.pos.y)
-		return clients.all(func(c): return c.seq >= INPUT_TICKS + SETTLE_TICKS), 3000)
+		return clients.all(func(c): return c.seq >= INPUT_TICKS + SETTLE_TICKS), 30 * S)
 
 	var all_errors: Array = []
 	for c in clients:
@@ -69,21 +69,21 @@ func run() -> void:
 	await _control_unpredictable_push()
 
 
-## Controprova: un evento che il client non può predire (spinta lato server) deve
+## Controprova: un evento che il client non può predire (spostamento lato server) deve
 ## comparire come errore > 0 e la riconciliazione deve riportarlo a zero.
 func _control_unpredictable_push() -> void:
-	print("\n--- Controprova: spinta lato server non predicibile ---")
+	print("\n--- Controprova: spostamento lato server non predicibile (30 cm) ---")
 	if not await start_match(1, [Level.SPAWNS[6]]):
 		return
 	var c = clients[0]
 	c.input_provider = func(_c, seq: int) -> Dictionary:
-		return {buttons = InputCmd.FORWARD if seq < 240 else 0, yaw = PI / 2, pitch = 0.0}
-	await ticks(60)
-	server.clients[c.my_id].state.vel += Vector3(0, 0, 6)  # solo il server lo sa
-	await wait_until(func(): return c.seq >= 400, 1000)
+		return {buttons = InputCmd.FORWARD if seq < 4 * S else 0, yaw = PI / 2, pitch = 0.0}
+	await ticks(S)
+	server.clients[c.my_id].state.pos += Vector3(0, 0, 0.3)  # spostamento deciso solo dal server
+	await wait_until(func(): return c.seq >= 7 * S, 20 * S)
 	var final_err: float = c.state.pos.distance_to(server.clients[c.my_id].state.pos)
-	print("errore massimo dopo la spinta %.3f m | correzione visiva max %.3f m | errore finale %.6f m" % [
+	print("errore massimo dopo lo spostamento %.3f m | correzione visiva max %.3f m | errore finale %.6f m" % [
 		c.err_max, c.correction_max, final_err])
-	check(c.err_max > 0.05, "la misura non ha visto la divergenza")
+	check(c.err_max > MAX_MEAN_ERROR, "la misura non ha visto la divergenza")
 	check(final_err <= MAX_FINAL_ERROR, "la riconciliazione non ha corretto la divergenza")
 	await stop_match()

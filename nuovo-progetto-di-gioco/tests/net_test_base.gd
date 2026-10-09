@@ -14,8 +14,11 @@ const NetConfig = preload("res://scripts/net/net_config.gd")
 const LAG_MS := 100.0
 const JITTER_MS := 10.0
 const LOSS := 0.05
+## Tick al secondo: le durate dei test sono in secondi * S, valide a ogni tick rate.
+const S := NetConfig.TICK_RATE
 
 var server: Server
+var port := 0
 var clients: Array = []
 var ok := true
 
@@ -41,7 +44,7 @@ func check(cond: bool, msg: String) -> void:
 
 ## Avvia server e client (in ordine di connessione, per spawn prevedibili).
 func start_match(n_clients: int, spawns: Array = [], lag := LAG_MS, jitter := JITTER_MS, loss := LOSS) -> bool:
-	var port := 30000 + randi() % 20000
+	port = 30000 + randi() % 20000
 	server = Server.new()
 	if not spawns.is_empty():
 		server.spawns = spawns
@@ -57,14 +60,14 @@ func start_match(n_clients: int, spawns: Array = [], lag := LAG_MS, jitter := JI
 	return true
 
 
-func add_client(port: int, lag := LAG_MS, jitter := JITTER_MS, loss := LOSS, seed_value := 0) -> Variant:
+func add_client(_port: int, lag := LAG_MS, jitter := JITTER_MS, loss := LOSS, seed_value := 0) -> Variant:
 	var c := Client.new()
 	c.local_view = false
 	c.input_provider = func(_c, _s): return {buttons = 0, yaw = 0.0, pitch = 0.0}
 	add_child(c)
-	c.start("127.0.0.1", port, lag, jitter, loss, seed_value)
+	c.start("127.0.0.1", _port, lag, jitter, loss, seed_value)
 	clients.append(c)
-	if not await wait_until(func(): return c.is_ready(), 600):
+	if not await wait_until(func(): return c.is_ready(), 5 * S):
 		check(false, "client non connesso")
 		return null
 	return c

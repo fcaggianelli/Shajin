@@ -61,8 +61,8 @@ func _moving_target(name: String, lag: float, expect_hits: bool) -> void:
 				dead_for.n = 0
 		elif t.state.pos.x > 15.0:
 			server.respawn_at(target.my_id, LANE_START)
-		return server.shot_log.size() >= SHOTS, 60 * 60)
-	await ticks(60)  # lascia arrivare gli ultimi snapshot con le uccisioni
+		return server.shot_log.size() >= SHOTS, 60 * S)
+	await ticks(S / 2)  # lascia arrivare gli ultimi snapshot con le uccisioni
 
 	var shots: Array = server.shot_log
 	var hits := shots.filter(func(s): return s.hit == target.my_id).size()
@@ -80,6 +80,10 @@ func _moving_target(name: String, lag: float, expect_hits: bool) -> void:
 		print("dallo sparo all'uccisione confermata sul client del tiratore: media %.0f ms (min %.0f, max %.0f)" % [
 			mean(shooter.kill_confirm_ms), shooter.kill_confirm_ms.min(), amax(shooter.kill_confirm_ms)])
 	check(shooter.kills_confirmed == hits and target.kills_confirmed == hits, "uccisioni non comunicate a tutti")
+	# I colpi degli avversari viaggiano sul canale inaffidabile: con il 5% di perdita
+	# qualcuno può mancare, ma la grande maggioranza deve arrivare.
+	print("colpi del tiratore ricevuti dal client del bersaglio (traccia nemica): %d/%d" % [target.enemy_shots, shots.size()])
+	check(target.enemy_shots >= shots.size() * 0.8, "il bersaglio non vede i colpi dell'avversario")
 	check(shots.size() >= SHOTS, "troppi pochi spari")
 	if expect_hits:
 		check(hits >= shots.size() * MIN_HIT_RATE, "hit rate %d/%d < %.0f%%" % [hits, shots.size(), MIN_HIT_RATE * 100])
@@ -103,7 +107,7 @@ func _through_wall() -> void:
 		var aim := aim_at(Movement.eye(c.state), r.pos + Movement.CENTER)
 		aim.buttons = InputCmd.FIRE
 		return aim
-	await wait_until(func(): return server.shot_log.size() >= 5, 60 * 15)
+	await wait_until(func(): return server.shot_log.size() >= 5, 15 * S)
 	var shots: Array = server.shot_log
 	var hits := shots.filter(func(s): return s.hit != 0).size()
 	var blocked := shots.filter(func(s): return s.blocked == target.my_id).size()
@@ -121,12 +125,12 @@ func _cooldown_spam() -> void:
 		return
 	var cheater = clients[0]
 	cheater.honor_cooldown = false
-	var hold := 180
+	var hold := 3 * S
 	var first: int = cheater.seq + 1
 	cheater.input_provider = func(_c, seq: int) -> Dictionary:
 		return {buttons = InputCmd.FIRE if seq >= first and seq < first + hold else 0, yaw = PI, pitch = 0.0}
-	await wait_until(func(): return cheater.seq > first + hold + 60, 60 * 10)
-	await ticks(30)
+	await wait_until(func(): return cheater.seq > first + hold + S, 10 * S)
+	await ticks(S / 2)
 	var accepted: Array = server.shot_log.map(func(s): return s.seq)
 	var gaps: Array = []
 	for i in range(1, accepted.size()):
