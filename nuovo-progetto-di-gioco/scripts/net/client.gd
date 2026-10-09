@@ -53,6 +53,8 @@ var players_info := {}            # id -> {score, deaths, protected, respawn_tic
 var kill_feed: Array = []         # [killer, victim] confermati dal server, più recenti in fondo
 var shots_fired := 0              # spari predetti (traccia mostrata subito)
 var kills_confirmed := 0          # uccisioni ricevute dal server (di chiunque)
+var kill_confirm_ms: Array = []   # ms tra il nostro sparo e la conferma dell'uccisione
+var _last_shot_usec := 0
 var _last_kill_id := -1
 
 # --- Statistiche ---
@@ -171,6 +173,7 @@ func _physics_process(_delta: float) -> void:
 	pending.append(cmd)
 	_send_usec[seq] = Time.get_ticks_usec()
 	sim.send(1, Protocol.encode_input(pending))
+	sim.flush()
 
 
 ## Lo sparo: raggio dal centro della camera, come lo vede il giocatore ora, e il
@@ -183,6 +186,7 @@ func _fill_shot(cmd: InputCmd) -> void:
 	cmd.shot_origin = Vector3(Protocol.f32(o.x), Protocol.f32(o.y), Protocol.f32(o.z))
 	cmd.shot_dir = Vector3(Protocol.f32(d.x), Protocol.f32(d.y), Protocol.f32(d.z))
 	shots_fired += 1
+	_last_shot_usec = Time.get_ticks_usec()
 	if local_view:
 		var targets := {}
 		for id in remote_states:
@@ -225,6 +229,8 @@ func _on_snapshot(snap: Dictionary) -> void:
 			_last_kill_id = k[0]
 			kill_feed.append([k[1], k[2]])
 			kills_confirmed += 1
+			if k[1] == my_id and _last_shot_usec > 0:
+				kill_confirm_ms.append((Time.get_ticks_usec() - _last_shot_usec) / 1000.0)
 			while kill_feed.size() > 5:
 				kill_feed.pop_front()
 			kill_confirmed.emit(k[1], k[2])

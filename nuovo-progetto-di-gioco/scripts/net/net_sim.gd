@@ -62,17 +62,30 @@ func poll() -> Array:
 			continue
 		_in.append([_deliver_time(), from, data])
 
+	_send_due()
 	var now := Time.get_ticks_usec()
-	for item in _take_due(_out, now):
-		if peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
-			continue
-		peer.set_target_peer(item[1])
-		peer.put_packet(item[2])
-
 	var result := []
 	for item in _take_due(_in, now):
 		result.append([item[1], item[2]])
 	return result
+
+
+## Da chiamare a fine tick, dopo aver accodato i pacchetti del tick: consegna a
+## ENet quelli già "partiti" e li spedisce subito. Senza, un pacchetto aspettava
+## il poll del tick successivo per entrare in ENet e un altro poll per uscire
+## (~2 tick = 33 ms in più per direzione anche senza latenza simulata).
+func flush() -> void:
+	_send_due()
+	if peer.get_connection_status() != MultiplayerPeer.CONNECTION_DISCONNECTED and peer.host != null:
+		peer.host.flush()
+
+
+func _send_due() -> void:
+	for item in _take_due(_out, Time.get_ticks_usec()):
+		if peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+			continue
+		peer.set_target_peer(item[1])
+		peer.put_packet(item[2])
 
 
 static func _take_due(queue: Array, now: int) -> Array:

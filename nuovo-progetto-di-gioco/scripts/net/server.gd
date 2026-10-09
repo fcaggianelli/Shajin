@@ -42,6 +42,7 @@ var rewind_clamped := 0         # colpi con latenza oltre MAX_REWIND_MS (rewind 
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
+var _kill_pending := false
 
 
 func start(port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
@@ -91,9 +92,13 @@ func _physics_process(_delta: float) -> void:
 		_handle_packet(pkt[0], pkt[1])
 	tick += 1
 	_respawn_dead()
-	if tick % NetConfig.SNAPSHOT_EVERY == 0:
+	# Snapshot a 20 Hz, più uno immediato quando c'è un'uccisione: così la morte
+	# arriva ai client senza aspettare lo snapshot successivo (fino a 50 ms).
+	if tick % NetConfig.SNAPSHOT_EVERY == 0 or _kill_pending:
+		_kill_pending = false
 		_record_history()
 		_send_snapshots()
+	sim.flush()
 
 
 func _handle_packet(from: int, data: PackedByteArray) -> void:
@@ -230,6 +235,7 @@ func _kill(killer: Dictionary, victim: Dictionary) -> void:
 	killer.score += 1
 	kills.append([next_kill_id, killer.id, victim.id])
 	next_kill_id = (next_kill_id % 65535) + 1
+	_kill_pending = true
 	while kills.size() > 8:
 		kills.pop_front()
 	print("[server] %d ha ucciso %d" % [killer.id, victim.id])

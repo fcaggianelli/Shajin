@@ -70,7 +70,11 @@ predetto/server); F4 accende o spegne la prediction, F5 la reconciliation.
   con la stessa simulazione, verifica che l'origine coincida con l'occhio che
   calcola lui (tolleranza 30 cm), riavvolge gli altri giocatori, prova il raggio
   contro le capsule riavvolte e poi un raycast sui muri. L'uccisione viaggia
-  negli snapshot (ultime 4, deduplicate per id).
+  negli snapshot (ultime 4, deduplicate per id). Quando c'è un'uccisione il
+  server manda subito uno snapshot extra, senza aspettare il prossimo dei 20 Hz.
+- **Invio immediato**: client e server consegnano a ENet i pacchetti del tick e
+  li spediscono a fine tick (`NetSim.flush()`). Prima ogni pacchetto aspettava
+  2 tick in più per direzione: circa 50 ms di ping anche in locale.
 - **Lag compensation**: istante riavvolto = `tick − min(latenza, 200 ms) − 100 ms`,
   con `latenza = tick − tempo del tiratore`. Il limite di 200 ms vale per la
   latenza di rete; i 100 ms di interpolazione si aggiungono sempre. La
@@ -113,9 +117,14 @@ Ogni test di rete avvia 1 server e da 2 a 9 client nello stesso processo, con ve
 socket ENet su localhost, input scriptati, **100 ms di latenza per direzione
 (RTT ≈ 200 ms), 10 ms di jitter e 5% di perdita in entrata e in uscita**. Fa
 eccezione la fase 3: chiede esplicitamente un tiratore con 100 ms di *ping*,
-quindi lì si usano 50 ms per direzione. Il ping mostrato è più alto della
-latenza simulata (circa +60 ms) perché include l'attesa dei tick a 60 Hz in
-invio e ricezione.
+quindi lì si usano 50 ms per direzione.
+
+**Ping e latenza aggiunta dal gioco.** Su rete locale senza simulatore il ping
+mostrato è di circa 17 ms: è l'attesa del tick a 60 Hz, sul server e sul client,
+prima di elaborare un pacchetto. Su Internet il ping mostrato è quindi circa
+RTT + 17 ms. Con il simulatore acceso si aggiunge ancora un tick per direzione
+(+ circa 30 ms), perché il simulatore rilascia i pacchetti ritardati una volta
+per tick.
 
 | Test | Cosa verifica | Soglia | Ultimo risultato |
 |---|---|---|---|
@@ -123,7 +132,7 @@ invio e ricezione.
 | `test_phase1` | errore predetto vs server dopo la reconciliation, 2 client (corsa, strafe, salti, urti) | **media ≤ 1 cm**, convergenza finale ≤ 1 mm | media **0.000000 m**, max 0.000000 m su 642 misure |
 | ″ controprova | spinta lato server non predicibile: l'errore deve vedersi e sparire | errore > 5 cm, finale ≤ 1 mm | max 0.072 m, finale 0.000000 m |
 | `test_phase2` | remoti visualizzati vs cronologia del server, 3 client | **media ≤ 5 cm**, ritardo 70–130 ms | media **0.0023 m**, max 0.19 m (snapshot persi), ritardo 87 ms + 1 tick di misura |
-| `test_phase3` A | bersaglio a 8 m/s, tiratore con 100 ms di ping mira a ciò che vede | ≥ 90% a segno | **12/12** (senza lag compensation 0/12), uccisioni ricevute da tutti 12/12 |
+| `test_phase3` A | bersaglio a 8 m/s, tiratore con 100 ms di ping mira a ciò che vede | ≥ 90% a segno | **12/12** (senza lag compensation 0/12), uccisioni ricevute da tutti 12/12; dallo sparo all'uccisione confermata in media 151 ms (rete locale senza simulatore: 14 ms) |
 | ″ B | raggio verso un bersaglio dietro il muro | 0 a segno | **0/5**: la capsula era sulla traiettoria 5/5, ma il muro è in mezzo |
 | ″ C | client modificato che spara a ogni tick per 3 s | 3 accettati, distanza ≥ 1 s | **3 accettati** (seq 2, 63, 124), **177 rifiutati** |
 | ″ D | ping ~300 ms: latenza oltre il limite di 200 ms | tutti limitati, ≤ 10% a segno | **12/12 limitati, 0/12 a segno** (con rewind illimitato 12/12) |

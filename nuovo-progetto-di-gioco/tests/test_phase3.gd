@@ -76,6 +76,9 @@ func _moving_target(name: String, lag: float, expect_hits: bool) -> void:
 		hits, shots.size(), unlimited, shots.size(), no_lc, shots.size()])
 	print("uccisioni decise dal server: %d | ricevute dal client del tiratore: %d | dal bersaglio: %d" % [
 		server.next_kill_id - 1, shooter.kills_confirmed, target.kills_confirmed])
+	if not shooter.kill_confirm_ms.is_empty():
+		print("dallo sparo all'uccisione confermata sul client del tiratore: media %.0f ms (min %.0f, max %.0f)" % [
+			mean(shooter.kill_confirm_ms), shooter.kill_confirm_ms.min(), amax(shooter.kill_confirm_ms)])
 	check(shooter.kills_confirmed == hits and target.kills_confirmed == hits, "uccisioni non comunicate a tutti")
 	check(shots.size() >= SHOTS, "troppi pochi spari")
 	if expect_hits:
