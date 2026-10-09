@@ -31,7 +31,7 @@ func _process(_delta: float) -> void:
 	var on := func(b: bool) -> String: return "ON" if b else "OFF"
 	var avg: float = c.err_sum / c.err_count if c.err_count > 0 else 0.0
 	_label.text = "\n".join([
-		"id %d   ping %d ms   fps %d" % [c.my_id, c.ping_ms, Engine.get_frames_per_second()],
+		"ping rete %d ms   latenza di gioco %d ms   fps %d" % [c.net_rtt_ms(), c.ping_ms, Engine.get_frames_per_second()],
 		"input in buffer: %d   (seq %d, ack %d)" % [c.pending.size(), c.seq, c.last_ack],
 		"errore predetto/server: %.3f m" % c.err_last,
 		"  medio %.4f   max %.4f m   (%d misure)" % [avg, c.err_max, c.err_count],

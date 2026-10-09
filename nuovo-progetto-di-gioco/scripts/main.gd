@@ -29,6 +29,7 @@ func _ready() -> void:
 	var headless := DisplayServer.get_name() == "headless" or args.has("headless")
 
 	if args.has("server") or (headless and not args.has("client")):
+		Engine.max_fps = 1000  # il server legge la rete a ogni frame: ~1 ms di attesa massima
 		if _start_server(port) != OK:
 			get_tree().quit(1)
 	elif args.has("host") or headless:

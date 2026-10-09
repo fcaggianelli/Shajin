@@ -31,8 +31,8 @@ dove li metti, server o client.
 
 Comandi di gioco: mouse per guardare, WASD per muoversi, spazio per saltare,
 click sinistro per sparare (cooldown 1 s), Esc per liberare il mouse.
-F3 mostra o nasconde l'overlay di debug (ping, input in buffer, errore
-predetto/server); F4 accende o spegne la prediction, F5 la reconciliation.
+F3 mostra o nasconde l'overlay di debug (ping di rete, latenza di gioco, input
+in buffer, errore predetto/server); F4 accende o spegne la prediction, F5 la reconciliation.
 
 ## Struttura
 
@@ -119,12 +119,19 @@ socket ENet su localhost, input scriptati, **100 ms di latenza per direzione
 eccezione la fase 3: chiede esplicitamente un tiratore con 100 ms di *ping*,
 quindi lì si usano 50 ms per direzione.
 
-**Ping e latenza aggiunta dal gioco.** Su rete locale senza simulatore il ping
-mostrato è di circa 17 ms: è l'attesa del tick a 60 Hz, sul server e sul client,
-prima di elaborare un pacchetto. Su Internet il ping mostrato è quindi circa
-RTT + 17 ms. Con il simulatore acceso si aggiunge ancora un tick per direzione
-(+ circa 30 ms), perché il simulatore rilascia i pacchetti ritardati una volta
-per tick.
+**Ping e latenza di gioco.** L'overlay mostra due numeri:
+- **ping rete**: il round-trip misurato da ENet, cioè il ping "puro" che
+  mostrano anche Valorant o CS;
+- **latenza di gioco**: dal momento in cui il comando viene creato a quello in
+  cui il client ne riceve la conferma. È il ping più le attese del ciclo di
+  gioco: il client crea comandi e legge gli snapshot una volta per tick (60 Hz,
+  in media circa 8 ms di attesa).
+
+Il server applica i comandi appena arrivano e manda subito gli snapshot con le
+uccisioni: legge la rete a ogni frame, e da dedicato headless gira a 1000 fps.
+Con "Ospita" il server legge la rete alla frequenza dei frame della finestra di
+chi ospita. Con il simulatore acceso si aggiunge circa un tick per direzione,
+perché il simulatore rilascia i pacchetti ritardati una volta per tick.
 
 | Test | Cosa verifica | Soglia | Ultimo risultato |
 |---|---|---|---|
@@ -132,7 +139,7 @@ per tick.
 | `test_phase1` | errore predetto vs server dopo la reconciliation, 2 client (corsa, strafe, salti, urti) | **media ≤ 1 cm**, convergenza finale ≤ 1 mm | media **0.000000 m**, max 0.000000 m su 642 misure |
 | ″ controprova | spinta lato server non predicibile: l'errore deve vedersi e sparire | errore > 5 cm, finale ≤ 1 mm | max 0.072 m, finale 0.000000 m |
 | `test_phase2` | remoti visualizzati vs cronologia del server, 3 client | **media ≤ 5 cm**, ritardo 70–130 ms | media **0.0023 m**, max 0.19 m (snapshot persi), ritardo 87 ms + 1 tick di misura |
-| `test_phase3` A | bersaglio a 8 m/s, tiratore con 100 ms di ping mira a ciò che vede | ≥ 90% a segno | **12/12** (senza lag compensation 0/12), uccisioni ricevute da tutti 12/12; dallo sparo all'uccisione confermata in media 151 ms (rete locale senza simulatore: 14 ms) |
+| `test_phase3` A | bersaglio a 8 m/s, tiratore con 100 ms di ping mira a ciò che vede | ≥ 90% a segno | **12/12** (senza lag compensation 0/12), uccisioni ricevute da tutti 12/12; dallo sparo all'uccisione confermata in media 148 ms (rete locale senza simulatore: 13–20 ms) |
 | ″ B | raggio verso un bersaglio dietro il muro | 0 a segno | **0/5**: la capsula era sulla traiettoria 5/5, ma il muro è in mezzo |
 | ″ C | client modificato che spara a ogni tick per 3 s | 3 accettati, distanza ≥ 1 s | **3 accettati** (seq 2, 63, 124), **177 rifiutati** |
 | ″ D | ping ~300 ms: latenza oltre il limite di 200 ms | tutti limitati, ≤ 10% a segno | **12/12 limitati, 0/12 a segno** (con rewind illimitato 12/12) |

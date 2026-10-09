@@ -58,7 +58,7 @@ var _last_shot_usec := 0
 var _last_kill_id := -1
 
 # --- Statistiche ---
-var ping_ms := 0.0
+var ping_ms := 0.0                # latenza di gioco: dal comando alla sua conferma (rete + attese dei tick)
 var err_last := 0.0
 var err_max := 0.0
 var err_sum := 0.0
@@ -107,6 +107,15 @@ func stop() -> void:
 	if _peer:
 		_peer.close()
 		_peer = null
+
+
+## Ping di rete puro: round-trip misurato da ENet (lo stesso concetto del ping di
+## Valorant/CS). Non include le attese dei tick né il simulatore di rete.
+func net_rtt_ms() -> int:
+	if _peer == null or _peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return 0
+	var p := _peer.get_peer(1)
+	return p.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME) if p else 0
 
 
 func is_ready() -> bool:
@@ -212,10 +221,13 @@ func _sample_input() -> Dictionary:
 
 
 func _on_snapshot(snap: Dictionary) -> void:
-	if snap.tick <= last_snap_tick:
+	if snap.tick < last_snap_tick or (snap.tick == last_snap_tick and snap.ack < last_ack):
 		return  # vecchio o fuori ordine
+	if snap.tick == last_snap_tick and not snapshots.is_empty():
+		snapshots[-1] = snap  # snapshot extra nello stesso tick (es. un'uccisione): più recente
+	else:
+		snapshots.append(snap)
 	last_snap_tick = snap.tick
-	snapshots.append(snap)
 	while snapshots.size() > 32:
 		snapshots.pop_front()
 	# Orologio: inseguiamo dolcemente il tick degli snapshot ricevuti.

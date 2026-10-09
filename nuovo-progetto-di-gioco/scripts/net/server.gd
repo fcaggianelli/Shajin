@@ -85,6 +85,23 @@ func _on_peer_disconnected(id: int) -> void:
 	print("[server] giocatore %d uscito (%d in partita)" % [id, clients.size()])
 
 
+## Fuori dal tick il server legge la rete a ogni frame (un server dedicato
+## headless gira a ~1000 fps) ed esegue subito i comandi arrivati, come Q3: un
+## comando non aspetta il tick successivo (fino a 16.7 ms). Le uccisioni partono
+## subito in uno snapshot. Le query fisiche sono sicure qui: la fisica gira nel
+## thread principale e fuori dallo step.
+func _process(_delta: float) -> void:
+	if _peer == null:
+		return
+	for pkt in sim.poll():
+		_handle_packet(pkt[0], pkt[1])
+	if _kill_pending:
+		_kill_pending = false
+		_record_history()
+		_send_snapshots()
+	sim.flush()
+
+
 func _physics_process(_delta: float) -> void:
 	if _peer == null:
 		return
@@ -123,7 +140,10 @@ func _record_history() -> void:
 	var players := {}
 	for id in clients:
 		players[id] = clients[id].state.copy()
-	history.append({tick = tick, players = players})
+	if not history.is_empty() and history[-1].tick == tick:
+		history[-1] = {tick = tick, players = players}  # snapshot extra nello stesso tick
+	else:
+		history.append({tick = tick, players = players})
 	var max_entries := int(NetConfig.HISTORY_SECONDS * NetConfig.TICK_RATE / NetConfig.SNAPSHOT_EVERY) + 1
 	while history.size() > max_entries:
 		history.pop_front()
