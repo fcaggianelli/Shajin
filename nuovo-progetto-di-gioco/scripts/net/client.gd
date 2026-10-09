@@ -37,6 +37,9 @@ var local_view := true
 ## true (--stats): stampa in console ping e latenza ogni 2 s.
 var print_stats := false
 var _stats_ms := 0
+var _ticks_done := 0
+var _stats_ticks := 0
+var ticks_per_second := 0.0       # tick di simulazione eseguiti davvero (deve essere 128)
 
 # --- Prediction ---
 var state: PlayerState            # stato predetto (o del server, se prediction off)
@@ -44,7 +47,8 @@ var server_state: PlayerState     # ultimo stato autoritativo ricevuto per noi
 var seq := 0
 var pending: Array = []           # InputCmd non ancora confermati
 var last_ack := 0
-var predicted := {}               # seq -> posizione predetta dopo quel comando
+var predicted := {}               # seq -> PlayerState predetto dopo quel comando
+var replays := 0                  # riconciliazioni che hanno richiesto il replay degli input
 var _send_usec := {}              # seq -> istante di invio (ping)
 
 # --- Snapshot ---
@@ -53,15 +57,15 @@ var snapshots: Array = []         # ultimi snapshot, ordinati per tick
 var server_tick_est := 0.0        # stima del tick server corrente
 var render_tick := 0.0            # istante (tick server) a cui mostriamo i remoti
 var players_info := {}            # id -> {score, deaths, protected, respawn_ticks, alive}
-var kill_feed: Array = []         # [killer, victim] confermati dal server, più recenti in fondo
+var kill_feed: Array = []         # messaggi (uccisioni, ingressi, uscite), più recenti in fondo
+var enemy_shots := 0              # colpi degli avversari ricevuti
 var shots_fired := 0              # spari predetti (traccia mostrata subito)
 var kills_confirmed := 0          # uccisioni ricevute dal server (di chiunque)
 var kill_confirm_ms: Array = []   # ms tra il nostro sparo e la conferma dell'uccisione
 var _last_shot_usec := 0
-var _last_kill_id := -1
 
 # --- Statistiche ---
-var ping_ms := 0.0                # latenza di gioco: dal comando alla sua conferma (rete + attese dei tick)
+var ping_ms := 0.0                # ping alla Q3: dal comando allo snapshot che lo conferma
 var err_last := 0.0
 var err_max := 0.0
 var err_sum := 0.0
@@ -74,21 +78,20 @@ var view_yaw := 0.0
 var view_pitch := 0.0
 var _prev_pos := Vector3.ZERO     # per interpolare la camera tra due tick
 var _camera: Camera3D
-var _peer: ENetMultiplayerPeer
 var _players := {}                # id -> Player (remoti)
 var _connect_start_ms := 0
 var _effects: Node3D
 
 
 func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
-	_peer = ENetMultiplayerPeer.new()
-	var err := _peer.create_client(host, port)
+	var enet := ENetMultiplayerPeer.new()
+	var err := enet.create_client(host, port)
 	if err != OK:
-		_peer = null
 		return err
 	_connect_start_ms = Time.get_ticks_msec()
-	sim = NetSim.new(_peer, seed_value)
+	sim = NetSim.new(enet, seed_value)
 	sim.configure(lag, jitter, loss)
+	sim.start_thread()  # la rete gira in un thread suo, ~2000 volte al secondo
 	if local_view:
 		_camera = Camera3D.new()
 		_camera.fov = 90
@@ -107,18 +110,19 @@ func start(host: String, port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed
 
 
 func stop() -> void:
-	if _peer:
-		_peer.close()
-		_peer = null
+	if sim:
+		sim.close()
+		sim = null
+
+
+func _exit_tree() -> void:
+	stop()
 
 
 ## Ping di rete puro: round-trip misurato da ENet (lo stesso concetto del ping di
 ## Valorant/CS). Non include le attese dei tick né il simulatore di rete.
 func net_rtt_ms() -> int:
-	if _peer == null or _peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
-		return 0
-	var p := _peer.get_peer(1)
-	return p.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME) if p else 0
+	return sim.enet_rtt_ms(1) if sim else 0
 
 
 func is_ready() -> bool:
@@ -138,19 +142,18 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if _peer == null:
+	if sim == null:
 		return
-	for pkt in sim.poll():
-		var opened := Protocol.open(pkt[1])
-		if opened[0] == Protocol.TYPE_SNAPSHOT:
-			_on_snapshot(Protocol.decode_snapshot(opened[1]))
+	_ticks_done += 1
+	_drain_network()
+	var status := sim.connection_status()
 	var timed_out := my_id == 0 and Time.get_ticks_msec() - _connect_start_ms > CONNECT_TIMEOUT_MS
-	if timed_out or _peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
+	if timed_out or status == MultiplayerPeer.CONNECTION_DISCONNECTED:
 		stop()
 		disconnected.emit(my_id != 0)
 		return
-	if my_id == 0 and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
-		my_id = _peer.get_unique_id()
+	if my_id == 0 and status == MultiplayerPeer.CONNECTION_CONNECTED:
+		my_id = sim.unique_id()
 	if state == null:
 		return  # aspettiamo il primo snapshot per conoscere lo spawn
 
@@ -173,7 +176,7 @@ func _physics_process(_delta: float) -> void:
 	var fired := false
 	if prediction_enabled:
 		fired = Movement.simulate_move(state, cmd, Movement.DT)
-		predicted[seq] = state.pos
+		predicted[seq] = state.copy()
 	else:
 		fired = wants_fire and state.alive
 	if fired or (wants_fire and not honor_cooldown):
@@ -184,8 +187,7 @@ func _physics_process(_delta: float) -> void:
 	# 3. buffer + invio (con ridondanza degli input non confermati)
 	pending.append(cmd)
 	_send_usec[seq] = Time.get_ticks_usec()
-	sim.send(1, Protocol.encode_input(pending))
-	sim.flush()
+	sim.send(1, Protocol.encode_input(pending))  # il thread di rete lo spedisce subito
 
 
 ## Lo sparo: raggio dal centro della camera, come lo vede il giocatore ora, e il
@@ -223,7 +225,51 @@ func _sample_input() -> Dictionary:
 	return {buttons = b, yaw = view_yaw, pitch = view_pitch}
 
 
-func _on_snapshot(snap: Dictionary) -> void:
+## Elabora i pacchetti arrivati. Viene chiamata a ogni tick e a ogni frame, così
+## uno snapshot o un evento non aspetta il tick successivo.
+func _drain_network() -> void:
+	if sim == null:
+		return
+	for pkt in sim.poll():
+		var opened := Protocol.open(pkt[1])
+		match opened[0]:
+			Protocol.TYPE_SNAPSHOT:
+				_on_snapshot(Protocol.decode_snapshot(opened[1]), pkt[2])
+			Protocol.TYPE_SHOT:
+				_on_enemy_shot(Protocol.decode_shot(opened[1]))
+			Protocol.TYPE_EVENT:
+				_on_event(Protocol.decode_event(opened[1]))
+
+
+func _on_enemy_shot(shot: Dictionary) -> void:
+	enemy_shots += 1
+	if local_view and shot.shooter != my_id:
+		_effects.shot(shot.from, shot.to, true)
+
+
+## Eventi sul canale affidabile: arrivano sempre, una volta, in ordine.
+func _on_event(e: Dictionary) -> void:
+	match e.kind:
+		Protocol.EVENT_KILL:
+			kill_feed.append("%s ha ucciso %s" % [player_name(e.killer), player_name(e.victim)])
+			kills_confirmed += 1
+			if e.killer == my_id and _last_shot_usec > 0:
+				kill_confirm_ms.append((Time.get_ticks_usec() - _last_shot_usec) / 1000.0)
+			kill_confirmed.emit(e.killer, e.victim)
+		Protocol.EVENT_JOIN:
+			if e.id != my_id:
+				kill_feed.append("%s è entrato" % player_name(e.id))
+		Protocol.EVENT_LEAVE:
+			kill_feed.append("%s è uscito" % player_name(e.id))
+	while kill_feed.size() > 5:
+		kill_feed.pop_front()
+
+
+static func player_name(id: int) -> String:
+	return "P%03d" % (id % 1000)
+
+
+func _on_snapshot(snap: Dictionary, arrival_usec: int) -> void:
 	if snap.tick < last_snap_tick or (snap.tick == last_snap_tick and snap.ack < last_ack):
 		return  # vecchio o fuori ordine
 	if snap.tick == last_snap_tick and not snapshots.is_empty():
@@ -239,16 +285,6 @@ func _on_snapshot(snap: Dictionary) -> void:
 		server_tick_est = snap.tick
 	else:
 		server_tick_est += drift * 0.1
-	for k in snap.kills:
-		if _last_kill_id < 0 or _kill_newer(k[0], _last_kill_id):
-			_last_kill_id = k[0]
-			kill_feed.append([k[1], k[2]])
-			kills_confirmed += 1
-			if k[1] == my_id and _last_shot_usec > 0:
-				kill_confirm_ms.append((Time.get_ticks_usec() - _last_shot_usec) / 1000.0)
-			while kill_feed.size() > 5:
-				kill_feed.pop_front()
-			kill_confirmed.emit(k[1], k[2])
 	players_info.clear()
 	for id in snap.players:
 		var p: Dictionary = snap.players[id]
@@ -267,17 +303,25 @@ func _on_snapshot(snap: Dictionary) -> void:
 		return
 
 	var ack: int = snap.ack
+	var ack_state = predicted.get(ack)  # prima che venga scartato qui sotto
+	# Errore di predizione: dove pensavamo di essere dopo `ack` vs dove dice il server.
+	# Si misura a ogni nuova conferma e quando il server cambia lo stato di un
+	# comando già confermato (un evento che il client non poteva prevedere).
+	if ack_state != null and (ack > last_ack or not ack_state.equals(server_state)):
+		_record_error(ack_state.pos.distance_to(server_state.pos))
 	if ack > last_ack:
 		if _send_usec.has(ack):
-			var rtt: float = (Time.get_ticks_usec() - _send_usec[ack]) / 1000.0 - snap.hold_ms
+			# Come il ping di Q3: dall'invio del comando all'arrivo dello snapshot che
+			# lo conferma, meno il tempo in cui il server l'ha tenuto.
+			var rtt: float = maxf((arrival_usec - _send_usec[ack]) / 1000.0 - snap.hold_ms, 0.0)
 			ping_ms = rtt if ping_ms == 0.0 else lerpf(ping_ms, rtt, 0.1)
-		# Errore di predizione: dove pensavamo di essere dopo `ack` vs dove dice il server.
-		if predicted.has(ack):
-			_record_error(predicted[ack].distance_to(server_state.pos))
 		# Scarta gli input confermati.
 		while not pending.is_empty() and pending[0].seq <= ack:
-			var done = pending.pop_front()
-			predicted.erase(done.seq)
+			pending.pop_front()
+		# La predizione per `ack` resta: serve se arrivano altri snapshot con lo stesso ack.
+		for s in predicted.keys():
+			if s < ack:
+				predicted.erase(s)
 		for s in _send_usec.keys():
 			if s <= ack:
 				_send_usec.erase(s)
@@ -293,18 +337,18 @@ func _on_snapshot(snap: Dictionary) -> void:
 		if respawned:
 			_prev_pos = state.pos
 	elif reconciliation_enabled:
-		# Riconciliazione: riparti dallo stato autoritativo e rigioca gli input pendenti.
-		var before := state.pos
-		state = server_state.copy()
-		for cmd in pending:
-			Movement.simulate_move(state, cmd, Movement.DT)
-			predicted[cmd.seq] = state.pos
-		correction_max = maxf(correction_max, before.distance_to(state.pos))
-
-
-## kill_id cresce e riparte da 1 dopo 65535.
-static func _kill_newer(a: int, b: int) -> bool:
-	return (a - b + 65536) % 65536 < 32768 and a != b
+		# Riconciliazione: se lo stato del server dopo `ack` coincide con quello che
+		# avevamo predetto, la simulazione è deterministica e lo stato attuale è già
+		# giusto: niente replay (a 128 snapshot/s è il caso normale e risparmia CPU).
+		# Altrimenti si riparte dallo stato autoritativo e si rigiocano gli input.
+		if ack_state == null or not ack_state.equals(server_state):
+			replays += 1
+			var before := state.pos
+			state = server_state.copy()
+			for cmd in pending:
+				Movement.simulate_move(state, cmd, Movement.DT)
+				predicted[cmd.seq] = state.copy()
+			correction_max = maxf(correction_max, before.distance_to(state.pos))
 
 
 func _record_error(e: float) -> void:
@@ -331,9 +375,15 @@ func _update_remotes() -> void:
 
 
 func _process(_delta: float) -> void:
-	if print_stats and state != null and Time.get_ticks_msec() - _stats_ms > 2000:
-		_stats_ms = Time.get_ticks_msec()
-		print("[stats] ping rete %d ms | latenza di gioco %.1f ms | fps %d" % [net_rtt_ms(), ping_ms, Engine.get_frames_per_second()])
+	_drain_network()
+	var now_ms := Time.get_ticks_msec()
+	if now_ms - _stats_ms >= 2000:
+		ticks_per_second = (_ticks_done - _stats_ticks) * 1000.0 / maxf(now_ms - _stats_ms, 1)
+		_stats_ticks = _ticks_done
+		_stats_ms = now_ms
+		if print_stats and state != null:
+			print("[stats] ping %.1f ms | ENet RTT %d ms | fps %d | tick/s %.0f (attesi %d)" % [
+				ping_ms, net_rtt_ms(), Engine.get_frames_per_second(), ticks_per_second, NetConfig.TICK_RATE])
 	if state == null or not local_view:
 		return
 	# Camera: posizione interpolata tra gli ultimi due tick, angoli dal mouse (subito).

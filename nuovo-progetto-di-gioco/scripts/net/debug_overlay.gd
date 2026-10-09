@@ -31,12 +31,13 @@ func _process(_delta: float) -> void:
 	var on := func(b: bool) -> String: return "ON" if b else "OFF"
 	var avg: float = c.err_sum / c.err_count if c.err_count > 0 else 0.0
 	_label.text = "\n".join([
-		"ping rete %d ms   latenza di gioco %d ms   fps %d" % [c.net_rtt_ms(), c.ping_ms, Engine.get_frames_per_second()],
+		"ping %d ms   (ENet RTT %d ms)" % [c.ping_ms, c.net_rtt_ms()],
+		"fps %d   tick/s %.0f (attesi %d)" % [Engine.get_frames_per_second(), c.ticks_per_second, NetConfig.TICK_RATE],
 		"input in buffer: %d   (seq %d, ack %d)" % [c.pending.size(), c.seq, c.last_ack],
 		"errore predetto/server: %.3f m" % c.err_last,
 		"  medio %.4f   max %.4f m   (%d misure)" % [avg, c.err_max, c.err_count],
 		"correzione visiva max: %.3f m" % c.correction_max,
-		"tick %d Hz  snapshot %d Hz  interp %d ms" % [NetConfig.TICK_RATE, NetConfig.TICK_RATE / NetConfig.SNAPSHOT_EVERY, NetConfig.INTERP_MS],
+		"tick %d Hz  snapshot %d Hz  interp %.1f ms  rewind max %d ms" % [NetConfig.TICK_RATE, NetConfig.TICK_RATE / NetConfig.SNAPSHOT_EVERY, NetConfig.INTERP_MS, NetConfig.MAX_REWIND_MS],
 		"rete sim: lag %d ms  jitter %d ms  loss %d%%   persi out %d in %d" % [
 			c.sim.lag_ms, c.sim.jitter_ms, c.sim.loss * 100, c.sim.dropped_out, c.sim.dropped_in],
 		"[F4] prediction: %s   [F5] reconciliation: %s   [F3] nascondi" % [

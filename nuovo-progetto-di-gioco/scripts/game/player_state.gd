@@ -11,6 +11,13 @@ var alive := true
 var cooldown := 0         # tick prima del prossimo sparo consentito
 
 
+## Uguaglianza per la riconciliazione. yaw e pitch non contano: ogni comando li
+## sovrascrive (e nello snapshot viaggiano a 32 bit), il resto deve essere identico.
+func equals(o) -> bool:
+	return pos == o.pos and vel == o.vel and on_ground == o.on_ground \
+		and alive == o.alive and cooldown == o.cooldown
+
+
 func copy():
 	var s = get_script().new()
 	s.pos = pos

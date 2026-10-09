@@ -1,5 +1,5 @@
 extends Node
-## Server autoritativo. Tick fisso a 60 Hz (_physics_process), snapshot a 20 Hz.
+## Server autoritativo. Tick fisso a 128 Hz (_physics_process), uno snapshot a ogni tick.
 ## Come in Quake III i comandi di un client vengono eseguiti appena arrivano
 ## (ognuno vale esattamente un tick): il risultato è identico alla predizione.
 
@@ -34,7 +34,7 @@ var history: Array = []
 # --- Arma ---
 var lag_comp_enabled := true
 var next_kill_id := 1
-var kills: Array = []           # [kill_id, killer, victim], le ultime vanno negli snapshot
+var kills: Array = []           # [kill_id, killer, victim] (inviate sul canale affidabile)
 var shot_log: Array = []        # un Dictionary per ogni sparo accettato (statistiche/test)
 var rejected_cooldown := 0      # FIRE arrivati prima della fine del cooldown
 var rejected_origin := 0        # origine o direzione del raggio non credibili
@@ -42,7 +42,9 @@ var rewind_clamped := 0         # colpi con latenza oltre MAX_REWIND_MS (rewind 
 
 var _peer: ENetMultiplayerPeer
 var _spawn_index := 0
-var _kill_pending := false
+var print_stats := false
+var _stats_usec := 0
+var _stats_tick := 0
 
 
 func start(port: int, lag := 0.0, jitter := 0.0, loss := 0.0, seed_value := 0) -> Error:
@@ -76,29 +78,38 @@ func _on_peer_connected(id: int) -> void:
 		s.pos = farthest_spawn(id)
 	clients[id] = {id = id, state = s, last_seq = 0, applied_usec = 0, score = 0, deaths = 0,
 		protect_until = 0, respawn_tick = 0}
+	_broadcast_event(Protocol.encode_presence(Protocol.EVENT_JOIN, id))
 	print("[server] giocatore %d entrato (%d in partita)" % [id, clients.size()])
 
 
 func _on_peer_disconnected(id: int) -> void:
 	clients.erase(id)
 	sim.forget_peer(id)
+	_broadcast_event(Protocol.encode_presence(Protocol.EVENT_LEAVE, id))
 	print("[server] giocatore %d uscito (%d in partita)" % [id, clients.size()])
 
 
-## Fuori dal tick il server legge la rete a ogni frame (un server dedicato
-## headless gira a ~1000 fps) ed esegue subito i comandi arrivati, come Q3: un
-## comando non aspetta il tick successivo (fino a 16.7 ms). Le uccisioni partono
-## subito in uno snapshot. Le query fisiche sono sicure qui: la fisica gira nel
-## thread principale e fuori dallo step.
+## Fuori dal tick il server legge la rete a ogni frame (il server dedicato gira
+## a ~1000 fps) ed esegue subito i comandi arrivati, come Q3: un comando non
+## aspetta il tick successivo. Le query fisiche sono sicure qui: la fisica gira
+## nel thread principale e fuori dallo step.
 func _process(_delta: float) -> void:
 	if _peer == null:
 		return
+	if print_stats:
+		var now := Time.get_ticks_usec()
+		if _stats_usec == 0:
+			_stats_usec = now
+			_stats_tick = tick
+		elif now - _stats_usec >= 2000000:
+			var secs := (now - _stats_usec) / 1e6
+			var pings := clients.keys().map(func(id): return "%d:%dms" % [id % 1000, sim.enet_rtt_ms(id)])
+			print("[server stats] tick/s %.1f (attesi %d) | fps %d | giocatori %d | ping ENet %s" % [
+				(tick - _stats_tick) / secs, NetConfig.TICK_RATE, Engine.get_frames_per_second(), clients.size(), pings])
+			_stats_usec = now
+			_stats_tick = tick
 	for pkt in sim.poll():
 		_handle_packet(pkt[0], pkt[1])
-	if _kill_pending:
-		_kill_pending = false
-		_record_history()
-		_send_snapshots()
 	sim.flush()
 
 
@@ -109,10 +120,7 @@ func _physics_process(_delta: float) -> void:
 		_handle_packet(pkt[0], pkt[1])
 	tick += 1
 	_respawn_dead()
-	# Snapshot a 20 Hz, più uno immediato quando c'è un'uccisione: così la morte
-	# arriva ai client senza aspettare lo snapshot successivo (fino a 50 ms).
-	if tick % NetConfig.SNAPSHOT_EVERY == 0 or _kill_pending:
-		_kill_pending = false
+	if tick % NetConfig.SNAPSHOT_EVERY == 0:
 		_record_history()
 		_send_snapshots()
 	sim.flush()
@@ -218,6 +226,11 @@ func _on_fire(shooter: Dictionary, cmd) -> void:
 		hit_unlimited = Weapon.trace(cmd.shot_origin, dir, _targets_at(shooter.id, tick - latency - interp)).id,
 		hit_no_lag_comp = Weapon.trace(cmd.shot_origin, dir, _targets_now(shooter.id)).id,
 	})
+	# Il colpo lo vedono subito anche gli altri (traccia dell'avversario).
+	var shot := Protocol.encode_shot(shooter.id, cmd.shot_origin, cmd.shot_origin + dir * result.dist)
+	for id in clients:
+		if id != shooter.id:
+			sim.send(id, shot)
 	if result.id != 0:
 		_kill(shooter, clients[result.id])
 
@@ -254,8 +267,8 @@ func _kill(killer: Dictionary, victim: Dictionary) -> void:
 	victim.respawn_tick = tick + RESPAWN_TICKS
 	killer.score += 1
 	kills.append([next_kill_id, killer.id, victim.id])
+	_broadcast_event(Protocol.encode_kill(next_kill_id, killer.id, victim.id))  # canale affidabile
 	next_kill_id = (next_kill_id % 65535) + 1
-	_kill_pending = true
 	while kills.size() > 8:
 		kills.pop_front()
 	print("[server] %d ha ucciso %d" % [killer.id, victim.id])
@@ -285,6 +298,11 @@ func farthest_spawn(exclude_id: int) -> Vector3:
 	return best
 
 
+func _broadcast_event(data: PackedByteArray) -> void:
+	for id in clients:
+		sim.send(id, data, true)
+
+
 ## Riporta in vita `id` in `pos` (usato dal ciclo di respawn e dai test).
 func respawn_at(id: int, pos: Vector3) -> void:
 	var s: PlayerState = clients[id].state
@@ -309,4 +327,4 @@ func _send_snapshots() -> void:
 	for id in clients:
 		var c: Dictionary = clients[id]
 		var hold_ms := int((now - c.applied_usec) / 1000) if c.last_seq > 0 else 0
-		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players, kills.slice(-4)))
+		sim.send(id, Protocol.encode_snapshot(tick, c.last_seq, hold_ms, players))

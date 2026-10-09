@@ -53,7 +53,7 @@ func _process(_delta: float) -> void:
 		var p: Dictionary = c.players_info[id]
 		rows.append("%s%s   %d uccisioni  %d morti" % ["> " if id == c.my_id else "", player_name(id), p.score, p.deaths])
 	_scores.text = "\n".join(rows)
-	_feed.text = "\n".join(c.kill_feed.map(func(k): return "%s ha ucciso %s" % [player_name(k[0]), player_name(k[1])]))
+	_feed.text = "\n".join(c.kill_feed)
 	var me: Dictionary = c.players_info.get(c.my_id, {})
 	_crosshair.visible = c.state.alive
 	if not c.state.alive:
