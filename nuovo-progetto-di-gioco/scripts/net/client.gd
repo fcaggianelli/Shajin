@@ -34,6 +34,9 @@ var honor_cooldown := true
 var input_provider := Callable()
 ## false nei test con più client nello stesso processo: niente camera/HUD.
 var local_view := true
+## true (--stats): stampa in console ping e latenza ogni 2 s.
+var print_stats := false
+var _stats_ms := 0
 
 # --- Prediction ---
 var state: PlayerState            # stato predetto (o del server, se prediction off)
@@ -328,6 +331,9 @@ func _update_remotes() -> void:
 
 
 func _process(_delta: float) -> void:
+	if print_stats and state != null and Time.get_ticks_msec() - _stats_ms > 2000:
+		_stats_ms = Time.get_ticks_msec()
+		print("[stats] ping rete %d ms | latenza di gioco %.1f ms | fps %d" % [net_rtt_ms(), ping_ms, Engine.get_frames_per_second()])
 	if state == null or not local_view:
 		return
 	# Camera: posizione interpolata tra gli ultimi due tick, angoli dal mouse (subito).

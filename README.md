@@ -25,7 +25,7 @@ godot --path . -- --client --host=127.0.0.1 --port=27960 --lag=50 --jitter=10 --
 tests/run_all.sh
 ```
 
-Senza argomenti: in headless parte il server, con finestra il menu.
+Senza argomenti: in headless parte il server, con finestra il menu. Con `--stats` il client stampa in console ping di rete e latenza di gioco ogni 2 s.
 `--lag/--jitter/--loss` valgono per direzione (entrata e uscita) sul processo
 dove li metti, server o client.
 

@@ -58,6 +58,7 @@ func _start_server(port: int) -> Error:
 func _start_client(host: String, port: int) -> void:
 	_client = Client.new()
 	_client.local_view = DisplayServer.get_name() != "headless"
+	_client.print_stats = args.has("stats")
 	add_child(_client)
 	_client.disconnected.connect(_on_client_disconnected.bind(host, port))
 	var p := _sim_params()
