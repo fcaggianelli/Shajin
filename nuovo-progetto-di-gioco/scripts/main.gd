@@ -24,12 +24,24 @@ func _ready() -> void:
 	# Diagnostica: utile se un eseguibile esportato non parte come previsto
 	# (avvialo con il .console.exe per vedere questa riga).
 	print("[main] scena %s | argomenti %s" % [scene_file_path, OS.get_cmdline_args() + OS.get_cmdline_user_args()])
-	add_child(Level.new())  # la geometria statica serve anche al server (query fisiche)
 	var port := int(args.get("port", "27960"))
 	var headless := DisplayServer.get_name() == "headless" or args.has("headless")
+	var dedicated := args.has("server") or (headless and not args.has("client"))
+	var level := Level.new()
+	level.visuals = not dedicated  # la geometria statica serve anche al server (query fisiche)
+	add_child(level)
 
-	if args.has("server") or (headless and not args.has("client")):
-		Engine.max_fps = 1000  # il server legge la rete a ogni frame: ~1 ms di attesa massima
+	if dedicated:
+		# Server dedicato: legge la rete ~1000 volte al secondo. Senza nulla da
+		# disegnare (headless) Godot dorme low_processor_usage_mode_sleep_usec a
+		# ogni frame, 6.9 ms di default: lo portiamo a 0.5 ms. Con una finestra
+		# non disegna nulla e non aspetta il vsync.
+		OS.low_processor_usage_mode = false
+		OS.low_processor_usage_mode_sleep_usec = 500
+		Engine.max_fps = 1000
+		if DisplayServer.get_name() != "headless":
+			DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+			RenderingServer.render_loop_enabled = false
 		if _start_server(port) != OK:
 			get_tree().quit(1)
 	elif args.has("host") or headless:
@@ -45,6 +57,7 @@ func _sim_params() -> Array:
 func _start_server(port: int) -> Error:
 	_server = Server.new()
 	_server.bind_ip = args.get("bind", "0.0.0.0")
+	_server.print_stats = args.has("stats")
 	add_child(_server)
 	var p := _sim_params()
 	var err := _server.start(port, p[0], p[1], p[2])

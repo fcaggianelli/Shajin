@@ -26,6 +26,9 @@ const SPAWNS := [
 ]
 const COLLISION_LAYER := 1
 
+## false sul server dedicato: solo collisioni, niente mesh/luci da disegnare.
+var visuals := true
+
 
 func _ready() -> void:
 	var mat := StandardMaterial3D.new()
@@ -41,12 +44,17 @@ func _ready() -> void:
 		shape.shape = BoxShape3D.new()
 		shape.shape.size = b[1]
 		body.add_child(shape)
+		add_child(body)
+		if not visuals:
+			continue
 		var mesh := MeshInstance3D.new()
 		mesh.mesh = BoxMesh.new()
 		mesh.mesh.size = b[1]
 		mesh.material_override = floor_mat if i == 0 else mat
 		body.add_child(mesh)
-		add_child(body)
+	Movement.space = get_world_3d().direct_space_state
+	if not visuals:
+		return
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, 30, 0)
 	sun.shadow_enabled = true
@@ -58,5 +66,3 @@ func _ready() -> void:
 	env.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.environment.ambient_light_color = Color(0.6, 0.6, 0.65)
 	add_child(env)
-	# Il movimento condiviso interroga questo spazio fisico.
-	Movement.space = get_world_3d().direct_space_state
